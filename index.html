@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html lang="vi" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Ra đề & Tra cứu Dung sai ISO 286 | EdTech Cơ khí</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        primary: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' },
+                        hole: { bg: '#e0f2fe', border: '#0284c7', text: '#0369a1' },
+                        shaft: { bg: '#ffedd5', border: '#ea580c', text: '#c2410c' },
+                        success: '#10b981',
+                        warning: '#f59e0b',
+                        danger: '#ef4444'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; transition: background-color 0.3s; }
+        .dark body { background-color: #0f172a; color: #f8fafc; }
+        .svg-container { width: 100%; height: 300px; display: flex; justify-content: center; align-items: center; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Print styles */
+        @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body, .dark body { background-color: white !important; color: black !important; }
+            .print-break { page-break-before: always; }
+            .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; border: 1px solid #ddd; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // Helper component for FontAwesome icons
+        const Icon = ({ name, className = "" }) => (
+            <i className={`fa-solid fa-${name} ${className}`}></i>
+        );
+
+        // Helper Card Component
+        const Card = ({ children, className = "" }) => (
+            <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden ${className}`}>
+                {children}
+            </div>
+        );
+
+        // Full Primary Matrix Database according to ISO 286 standard
+        // (Dữ liệu nhúng dùng làm FALLBACK; nguồn chính tải từ Backend SQL qua /api/iso/tables)
+        let ISO_DB = {
+            sizeRanges: [
+                { min: 0, max: 3, id: 1 }, { min: 3, max: 6, id: 2 }, { min: 6, max: 10, id: 3 },
+                { min: 10, max: 18, id: 4 }, { min: 18, max: 30, id: 5 }, { min: 30, max: 50, id: 6 },
+                { min: 50, max: 80, id: 7 }, { min: 80, max: 120, id: 8 }, { min: 120, max: 180, id: 9 },
+                { min: 180, max: 250, id: 10 }, { min: 250, max: 315, id: 11 }, { min: 315, max: 400, id: 12 },
+                { min: 400, max: 500, id: 13 }
+            ],
+            // Standard Tolerances IT (µm)
+            itGrades: {
+                5: [4, 5, 6, 8, 9, 11, 13, 15, 18, 20, 23, 25, 27],
+                6: [6, 8, 9, 11, 13, 16, 19, 22, 25, 29, 32, 36, 40],
+                7: [10, 12, 15, 18, 21, 25, 30, 35, 40, 46, 52, 57, 63],
+                8: [14, 18, 22, 27, 33, 39, 46, 54, 63, 72, 81, 89, 97],
+                9: [25, 30, 36, 43, 52, 62, 74, 87, 100, 115, 130, 140, 155],
+                10: [40, 48, 58, 70, 84, 100, 120, 140, 160, 185, 210, 230, 250],
+                11: [60, 75, 90, 110, 130, 160, 190, 220, 250, 290, 320, 360, 400]
+            },
+            // Fundamental deviations for shafts (es for a-h, ei for k-zc)
+            shaftDeviations: {
+                'a': [-270, -270, -280, -290, -300, -320, -340, -380, -410, -460, -520, -580, -640],
+                'b': [-140, -140, -150, -150, -160, -180, -200, -220, -240, -260, -290, -320, -350],
+                'c': [-60, -70, -80, -95, -110, -130, -150, -180, -210, -230, -260, -290, -320],
+                'cd': [-34, -46, -56, -64, -76, -90, -106, -125, -145, -170, -190, -210, -230],
+                'd': [-20, -30, -40, -50, -65, -80, -100, -120, -145, -170, -190, -210, -230],
+                'e': [-14, -20, -25, -32, -40, -50, -60, -72, -85, -100, -110, -125, -135],
+                'ef': [-10, -14, -18, -24, -30, -38, -45, -54, -64, -75, -84, -94, -104],
+                'f': [-6, -10, -13, -16, -20, -25, -30, -36, -43, -50, -56, -62, -68],
+                'fg': [-4, -6, -8, -10, -12, -14, -18, -22, -26, -30, -34, -38, -42],
+                'g': [-2, -4, -5, -6, -7, -9, -10, -12, -14, -15, -17, -18, -20],
+                'h': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                'js': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Symmetric ±IT/2
+                'j': [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24],
+                'k': [0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5],
+                'm': [2, 4, 6, 7, 8, 9, 11, 13, 15, 17, 20, 21, 23],
+                'n': [4, 8, 10, 12, 15, 17, 20, 23, 27, 31, 34, 37, 40],
+                'p': [6, 12, 15, 18, 22, 26, 32, 37, 43, 50, 56, 62, 68],
+                'r': [10, 16, 21, 28, 35, 43, 53, 65, 79, 94, 108, 122, 136],
+                's': [14, 23, 28, 37, 48, 60, 74, 93, 114, 136, 158, 180, 202],
+                't': [18, 28, 35, 45, 54, 68, 87, 112, 140, 168, 196, 224, 252],
+                'u': [20, 33, 40, 56, 70, 88, 112, 144, 180, 218, 258, 298, 338],
+                'v': [24, 38, 48, 68, 86, 110, 142, 186, 232, 282, 334, 386, 438],
+                'x': [28, 46, 58, 84, 110, 140, 182, 240, 300, 366, 434, 502, 570],
+                'z': [36, 60, 76, 112, 148, 190, 250, 330, 410, 500, 590, 680, 770],
+                'za': [44, 72, 92, 136, 180, 232, 310, 410, 510, 620, 730, 840, 950],
+                'zc': [56, 90, 116, 172, 228, 294, 390, 520, 650, 780, 920, 1060, 1200]
+            }
+        };
+
+        // Nạp bảng ISO 286 từ Backend CSDL SQL qua API GET /api/iso/tables.
+        // Nếu backend chưa chạy -> giữ nguyên dữ liệu nhúng ISO_DB làm fallback.
+        async function loadIsoDbFromApi() {
+            try {
+                const res = await fetch('http://127.0.0.1:8000/api/iso/tables');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const db = await res.json();
+                if (db && Array.isArray(db.sizeRanges) && db.itGrades && db.shaftDeviations) {
+                    // Chuẩn hoá itGrades: key '5' -> [4,5,6,...]
+                    const itGrades = {};
+                    Object.keys(db.itGrades).forEach(k => {
+                        itGrades[k] = db.itGrades[k];
+                    });
+                    ISO_DB = { ...ISO_DB, ...db, itGrades };
+                    console.info('[ISO 286] Đã tải bảng tra ISO 286 từ CSDL SQL (/api/iso/tables).');
+                }
+            } catch (e) {
+                console.warn('[ISO 286] Không tải được bảng từ Backend, dùng dữ liệu nhúng fallback.', e.message);
+            }
+        }
+
+        class DualEngineMath {
+            static getRangeIndex(D) {
+                return ISO_DB.sizeRanges.findIndex(r => D > r.min && D <= r.max);
+            }
+
+            // Fallback Math Engine (ISO 286 Standard Formula Engine)
+            static fallbackCalculateIT(D, grade) {
+                let i = 0.45 * Math.pow(D, 1/3) + 0.001 * D; 
+                const multipliers = { 5: 7, 6: 10, 7: 16, 8: 25, 9: 40, 10: 64, 11: 100 };
+                return Math.round(i * (multipliers[grade] || 10));
+            }
+
+            static calculate(D, holeClass, shaftClass) {
+                D = parseFloat(D);
+                if (isNaN(D) || D <= 0 || D > 3150) return { error: "Kích thước D phải từ 0 - 3150mm" };
+
+                // Parse input (e.g., 'H7', 'g6')
+                const parseTolerance = (str) => {
+                    if (!str) return null;
+                    const match = str.trim().match(/([a-zA-Z]+)(\d+)/);
+                    if (!match) return null;
+                    return { sym: match[1], it: parseInt(match[2], 10) };
+                };
+
+                const hole = parseTolerance(holeClass);
+                const shaft = parseTolerance(shaftClass);
+
+                if (!hole || !shaft) return { error: "Định dạng miền dung sai chưa đúng (VD: H7, g6)" };
+
+                const idx = this.getRangeIndex(D);
+                let IT_hole, IT_shaft, ES, EI, es, ei;
+
+                // 1. PRIMARY ENGINE: Tra bảng CSDL
+                if (idx !== -1 && ISO_DB.itGrades[hole.it] && ISO_DB.itGrades[shaft.it]) {
+                    IT_hole = ISO_DB.itGrades[hole.it][idx];
+                    IT_shaft = ISO_DB.itGrades[shaft.it][idx];
+                } else {
+                    // 2. SECONDARY FALLBACK ENGINE
+                    IT_hole = this.fallbackCalculateIT(D, hole.it);
+                    IT_shaft = this.fallbackCalculateIT(D, shaft.it);
+                }
+
+                // Tính toán sai lệch cho Trục
+                const sSym = shaft.sym.toLowerCase();
+                const upperDevLetters = ['a','b','c','cd','d','e','ef','f','fg','g','h'];
+                
+                if (idx !== -1 && ISO_DB.shaftDeviations[sSym]) {
+                    let fundDev = ISO_DB.shaftDeviations[sSym][idx];
+                    if (upperDevLetters.includes(sSym)) {
+                        es = fundDev;
+                        ei = es - IT_shaft;
+                    } else if (sSym === 'js') {
+                        es = Math.round(IT_shaft / 2);
+                        ei = -Math.round(IT_shaft / 2);
+                    } else { 
+                        ei = fundDev; // k, m, n, p, r, s, t, u, v, z...
+                        es = ei + IT_shaft;
+                    }
+                } else {
+                    // Math formula estimation for unlisted shaft classes
+                    if (sSym === 'js') {
+                        es = Math.round(IT_shaft / 2);
+                        ei = -es;
+                    } else if (sSym < 'h') {
+                        es = -Math.round(5.5 * Math.pow(D, 0.41));
+                        ei = es - IT_shaft;
+                    } else {
+                        ei = Math.round(5 * Math.pow(D, 0.34));
+                        es = ei + IT_shaft;
+                    }
+                }
+
+                // Tính toán sai lệch cho Lỗ (Hole)
+                const hSym = hole.sym.toUpperCase();
+                if (hSym === 'H') {
+                    EI = 0;
+                    ES = EI + IT_hole;
+                } else if (hSym === 'JS') {
+                    ES = Math.round(IT_hole / 2);
+                    EI = -Math.round(IT_hole / 2);
+                } else if (hSym < 'H') {
+                    // Lỗ hở A-G (Trái dấu với Trục a-g)
+                    EI = -es; // Quy tắc đảo dấu
+                    ES = EI + IT_hole;
+                } else {
+                    // Lỗ chặt K-ZC
+                    ES = -ei; 
+                    EI = ES - IT_hole;
+                }
+
+                // Xác định đặc tính lắp ghép (Fit Characteristics)
+                let Smax = ES - ei;
+                let Smin = EI - es;
+                let Nmax = es - EI;
+                let Nmin = ei - ES;
+                
+                let fitType, fitClass, colorTheme;
+                if (Smin >= 0) {
+                    fitType = "Lắp lỏng (Có độ hở)";
+                    fitClass = "clearance";
+                    colorTheme = "emerald";
+                } else if (Nmin >= 0) {
+                    fitType = "Lắp chặt (Có độ dôi)";
+                    fitClass = "interference";
+                    colorTheme = "rose";
+                } else {
+                    fitType = "Lắp trung gian";
+                    fitClass = "transition";
+                    colorTheme = "amber";
+                }
+
+                return {
+                    D,
+                    hole: { sym: hSym, it: hole.it, ES, EI, T: IT_hole, Dmax: D + ES/1000, Dmin: D + EI/1000 },
+                    shaft: { sym: sSym, it: shaft.it, es, ei, T: IT_shaft, dmax: D + es/1000, dmin: D + ei/1000 },
+                    fit: { type: fitType, class: fitClass, colorTheme, Smax, Smin, Nmax, Nmin, TN: IT_hole + IT_shaft }
+                };
+            }
+        }
+
+        const ISO_LIBRARY_FITS = [
+            // Clearance Fits
+            { symbol: "H7/g6", category: "clearance", type: "Lắp trượt chính xác", app: "Pít-tông thủy lực, ổ trượt chính xác, trục con lăn máy công cụ", feature: "Có độ hở nhỏ, dịch chuyển dọc trục trơn tru, không lắc rơ." },
+            { symbol: "H7/f7", category: "clearance", type: "Lắp quay tự do", app: "Ổ lót trục quay, trục bánh răng tự do, khớp xoay", feature: "Độ hở vừa phải, hoạt động ổn định ở nhiệt độ bình thường." },
+            { symbol: "H8/e8", category: "clearance", type: "Lắp hở rộng", app: "Gối đỡ tải trọng lớn, cụm máy làm việc nhiệt độ cao", feature: "Độ hở lớn, bôi trơn dễ dàng, bù nở vì nhiệt." },
+            { symbol: "H8/d9", category: "clearance", type: "Lắp hở rất rộng", app: "Khớp nối lỏng, puly truyền động rời, trục đệm", feature: "Độ hở rất lớn, dùng cho chi tiết thô hoặc khoảng cách rộng." },
+            { symbol: "H7/h6", category: "clearance", type: "Lắp trượt định vị", app: "Bánh răng di trượt, tay quay điều khiển, khớp nối di động", feature: "Độ hở bằng 0 đến rất nhỏ, tháo lắp bằng tay dễ dàng." },
+
+            // Transition Fits
+            { symbol: "H7/js6", category: "transition", type: "Lắp định vị chính xác", app: "Bánh răng cố định trên trục, chốt vị trí tháo lắp", feature: "Xác định tâm chính xác, tháo lắp bằng búa gỗ/đồng." },
+            { symbol: "H7/k6", category: "transition", type: "Lắp định vị chịu tải", app: "Chốt định vị, vành đai bánh răng, puly định vị", feature: "Độ dôi nhỏ hoặc độ hở nhỏ, không rơ dọc trục." },
+            { symbol: "H7/m6", category: "transition", type: "Lắp định vị chặt", app: "Bánh răng truyền động êm, vành dắt ổ lăn", feature: "Chủ yếu có độ dôi nhỏ, truyền momen xoắn nhẹ." },
+            { symbol: "H7/n6", category: "transition", type: "Lắp chặt trung gian", app: "Bánh răng heavy-duty, vành đệm truyền động", feature: "Cần lực ép nhẹ để lắp, chống xoay chi tiết." },
+
+            // Interference Fits
+            { symbol: "H7/p6", category: "interference", type: "Lắp ép nhẹ", app: "Bạc lót đồng, vành răng định vị, bánh răng nhỏ", feature: "Truyền momen xoắn vừa, lắp bằng ép lực cơ khí." },
+            { symbol: "H7/r6", category: "interference", type: "Lắp ép vừa", app: "Bánh xe lửa, bạc lót chịu tải lớn, đĩa xích", feature: "Cần máy ép thủy lực, mối ghép cố định tuyệt đối." },
+            { symbol: "H7/s6", category: "interference", type: "Lắp ép nặng (Nhiệt)", app: "Vành thép đè liền trục, trục khuỷu ghép, bánh răng chịu lực", feature: "Truyền momen lớn không cần key, gia nhiệt lỗ khi lắp." }
+        ];
+
+        const SvgToleranceGraph = ({ data }) => {
+            if (!data || data.error) return null;
+            const { hole, shaft, D } = data;
+
+            const allDeviations = [hole.ES, hole.EI, shaft.es, shaft.ei, 0];
+            const maxDev = Math.max(...allDeviations);
+            const minDev = Math.min(...allDeviations);
+            const totalSpan = maxDev - minDev;
+            
+            const padding = totalSpan * 0.25 || 15; 
+            const yMax = maxDev + padding;
+            const yMin = minDev - padding;
+            
+            const svgWidth = 600;
+            const svgHeight = 360;
+            const startX = 50;
+
+            const mapY = (val) => svgHeight - ((val - yMin) / (yMax - yMin)) * svgHeight;
+            const yZero = mapY(0);
+            
+            const holeY = mapY(hole.ES);
+            const holeH = Math.max(2, mapY(hole.EI) - mapY(hole.ES));
+            const shaftY = mapY(shaft.es);
+            const shaftH = Math.max(2, mapY(shaft.ei) - mapY(shaft.es));
+
+            return (
+                <div className="w-full overflow-x-auto bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-4">
+                    <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto" style={{ maxHeight: '380px' }}>
+                        {/* Zero Line */}
+                        <line x1="20" y1={yZero} x2={svgWidth - 20} y2={yZero} stroke="currentColor" strokeWidth="2" className="text-slate-800 dark:text-slate-200" strokeDasharray="4" />
+                        <text x="5" y={yZero + 4} fontSize="13" fill="currentColor" className="text-slate-600 dark:text-slate-400 font-mono">0</text>
+                        <text x={svgWidth - 15} y={yZero + 4} fontSize="13" fill="currentColor" className="text-slate-600 dark:text-slate-400 font-mono">0</text>
+
+                        {/* Hole Zone */}
+                        <g transform={`translate(${startX + 50}, 0)`}>
+                            <rect x="0" y={holeY} width="110" height={holeH} fill="#e0f2fe" stroke="#0284c7" strokeWidth="2" rx="4" />
+                            <text x="55" y={holeY + holeH/2 + 5} textAnchor="middle" fill="#0369a1" fontSize="15" fontWeight="bold">Lỗ {hole.sym}{hole.it}</text>
+                            
+                            <line x1="-10" y1={holeY} x2="120" y2={holeY} stroke="#0284c7" strokeWidth="1" strokeDasharray="3" />
+                            <text x="-15" y={holeY + 4} textAnchor="end" fill="#0369a1" fontSize="11" fontWeight="bold">ES = {hole.ES > 0 ? `+${hole.ES}` : hole.ES}</text>
+                            
+                            <line x1="-10" y1={holeY+holeH} x2="120" y2={holeY+holeH} stroke="#0284c7" strokeWidth="1" strokeDasharray="3" />
+                            <text x="-15" y={holeY+holeH + 4} textAnchor="end" fill="#0369a1" fontSize="11" fontWeight="bold">EI = {hole.EI > 0 ? `+${hole.EI}` : hole.EI}</text>
+                        </g>
+
+                        {/* Shaft Zone */}
+                        <g transform={`translate(${startX + 260}, 0)`}>
+                            <rect x="0" y={shaftY} width="110" height={shaftH} fill="#ffedd5" stroke="#ea580c" strokeWidth="2" rx="4" />
+                            <text x="55" y={shaftY + shaftH/2 + 5} textAnchor="middle" fill="#c2410c" fontSize="15" fontWeight="bold">Trục {shaft.sym}{shaft.it}</text>
+                            
+                            <line x1="120" y1={shaftY} x2="-10" y2={shaftY} stroke="#ea580c" strokeWidth="1" strokeDasharray="3" />
+                            <text x="125" y={shaftY + 4} textAnchor="start" fill="#c2410c" fontSize="11" fontWeight="bold">es = {shaft.es > 0 ? `+${shaft.es}` : shaft.es}</text>
+                            
+                            <line x1="120" y1={shaftY+shaftH} x2="-10" y2={shaftY+shaftH} stroke="#ea580c" strokeWidth="1" strokeDasharray="3" />
+                            <text x="125" y={shaftY+shaftH + 4} textAnchor="start" fill="#c2410c" fontSize="11" fontWeight="bold">ei = {shaft.ei > 0 ? `+${shaft.ei}` : shaft.ei}</text>
+                        </g>
+                        
+                        {/* Title */}
+                        <text x={svgWidth/2} y="25" textAnchor="middle" fontSize="15" fontWeight="bold" fill="currentColor" className="text-slate-800 dark:text-slate-200">
+                            Sơ đồ Miền Dung Sai Mối Ghép ϕ{D} {hole.sym}{hole.it}/{shaft.sym}{shaft.it} (μm)
+                        </text>
+                    </svg>
+                </div>
+            );
+        };
+
+        const LookupScreen = () => {
+            const [nominalSize, setNominalSize] = useState("45");
+            const [holeClass, setHoleClass] = useState("H7");
+            const [shaftClass, setShaftClass] = useState("g6");
+            const [result, setResult] = useState(null);
+
+            const handleLookup = () => {
+                const res = DualEngineMath.calculate(nominalSize, holeClass, shaftClass);
+                setResult(res);
+            };
+
+            useEffect(() => {
+                // Nạp bảng ISO 286 từ Backend SQL (fallback: dữ liệu nhúng)
+                loadIsoDbFromApi().then(handleLookup);
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
+
+            const presets = [
+                { name: "Ổ trượt chính xác", val: ["45", "H7", "g6"] },
+                { name: "Bánh răng cố định", val: ["100", "P7", "h6"] },
+                { name: "Vành ổ lăn", val: ["25", "H7", "k6"] }
+            ];
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Tra Cứu & Trực Quan Hóa Dung Sai</h2>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Động cơ Dual-Engine Math đảm bảo độ chính xác tuyệt đối theo chuẩn ISO 286.</p>
+                            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1"><Icon name="database" className="mr-1"/> Nguồn dữ liệu: Cơ sở dữ liệu SQL (tự động tải từ Backend).</p>
+                        </div>
+                    </div>
+
+                    <Card className="p-6 no-print">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                            <div>
+                                <label className="block text-sm font-medium mb-2 text-slate-700 dark:text-slate-300">Kích thước D (mm)</label>
+                                <input type="number" value={nominalSize} onChange={e => setNominalSize(e.target.value)}
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 transition-all font-mono" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-2 text-slate-700 dark:text-slate-300">Miền Lỗ (VD: H7)</label>
+                                <input type="text" value={holeClass} onChange={e => setHoleClass(e.target.value.toUpperCase())}
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 transition-all font-mono" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-2 text-slate-700 dark:text-slate-300">Miền Trục (VD: g6)</label>
+                                <input type="text" value={shaftClass} onChange={e => setShaftClass(e.target.value.toLowerCase())}
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 transition-all font-mono" />
+                            </div>
+                            <div className="flex items-end">
+                                <button onClick={handleLookup} className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg p-2.5 transition-colors flex items-center justify-center gap-2">
+                                    <Icon name="calculator" /> TÍNH & TRA CỨU
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex gap-2 items-center text-sm flex-wrap">
+                            <span className="text-slate-500 dark:text-slate-400">Gợi ý mẫu:</span>
+                            {presets.map(p => (
+                                <button key={p.name} onClick={() => { setNominalSize(p.val[0]); setHoleClass(p.val[1]); setShaftClass(p.val[2]); setTimeout(handleLookup, 50); }}
+                                    className="px-3 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-full transition-colors border border-slate-200 dark:border-slate-600 text-xs">
+                                    ϕ{p.val[0]} {p.val[1]}/{p.val[2]} ({p.name})
+                                </button>
+                            ))}
+                        </div>
+                    </Card>
+
+                    {result && !result.error && (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div className="lg:col-span-1 space-y-6">
+                                <Card className="p-4 flex items-center gap-4">
+                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl text-white ${
+                                        result.fit.colorTheme === 'emerald' ? 'bg-emerald-500' :
+                                        result.fit.colorTheme === 'rose' ? 'bg-rose-500' : 'bg-amber-500'
+                                    }`}>
+                                        <Icon name={result.fit.colorTheme === 'emerald' ? 'arrows-left-right' : result.fit.colorTheme === 'rose' ? 'arrows-to-dot' : 'compress'} />
+                                    </div>
+                                    <div>
+                                        <div className={`font-bold text-lg ${
+                                            result.fit.colorTheme === 'emerald' ? 'text-emerald-600 dark:text-emerald-400' :
+                                            result.fit.colorTheme === 'rose' ? 'text-rose-600 dark:text-rose-400' : 'text-amber-600 dark:text-amber-400'
+                                        }`}>
+                                            {result.fit.type}
+                                        </div>
+                                        <div className="text-sm text-slate-500 font-mono">Dung sai ghép TS,N = {result.fit.TN} μm</div>
+                                    </div>
+                                </Card>
+
+                                <Card className="p-0">
+                                    <div className="bg-hole-bg p-3 border-b border-hole-border font-semibold text-hole-text flex justify-between items-center">
+                                        <span><Icon name="circle-dot" className="mr-2"/> Chi tiết LỖ (Hole)</span>
+                                        <span className="text-xl">ϕ{result.D} {result.hole.sym}{result.hole.it}</span>
+                                    </div>
+                                    <div className="p-4 space-y-3 font-mono text-sm dark:text-slate-300">
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>Sai lệch trên (ES):</span> <span className="font-bold text-hole-text">{result.hole.ES > 0 ? `+${result.hole.ES}` : result.hole.ES} μm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>Sai lệch dưới (EI):</span> <span className="font-bold text-hole-text">{result.hole.EI} μm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>KT lớn nhất (Dmax):</span> <span>{result.hole.Dmax.toFixed(3)} mm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>KT nhỏ nhất (Dmin):</span> <span>{result.hole.Dmin.toFixed(3)} mm</span></div>
+                                        <div className="flex justify-between font-semibold"><span>Dung sai (TD):</span> <span>{result.hole.T} μm</span></div>
+                                    </div>
+                                </Card>
+
+                                <Card className="p-0">
+                                    <div className="bg-shaft-bg p-3 border-b border-shaft-border font-semibold text-shaft-text flex justify-between items-center">
+                                        <span><Icon name="circle" className="mr-2"/> Chi tiết TRỤC (Shaft)</span>
+                                        <span className="text-xl">ϕ{result.D} {result.shaft.sym}{result.shaft.it}</span>
+                                    </div>
+                                    <div className="p-4 space-y-3 font-mono text-sm dark:text-slate-300">
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>Sai lệch trên (es):</span> <span className="font-bold text-shaft-text">{result.shaft.es > 0 ? `+${result.shaft.es}` : result.shaft.es} μm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>Sai lệch dưới (ei):</span> <span className="font-bold text-shaft-text">{result.shaft.ei > 0 ? `+${result.shaft.ei}` : result.shaft.ei} μm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>KT lớn nhất (dmax):</span> <span>{result.shaft.dmax.toFixed(3)} mm</span></div>
+                                        <div className="flex justify-between border-b border-dashed border-slate-200 dark:border-slate-700 pb-2"><span>KT nhỏ nhất (dmin):</span> <span>{result.shaft.dmin.toFixed(3)} mm</span></div>
+                                        <div className="flex justify-between font-semibold"><span>Dung sai (Td):</span> <span>{result.shaft.T} μm</span></div>
+                                    </div>
+                                </Card>
+                            </div>
+
+                            <div className="lg:col-span-2 space-y-6">
+                                <Card className="p-6">
+                                    <h3 className="font-semibold text-slate-800 dark:text-white mb-4"><Icon name="chart-simple" className="text-primary-500 mr-2"/> Đồ thị Vector Tự động</h3>
+                                    <SvgToleranceGraph data={result} />
+                                    
+                                    <div className="mt-6 grid grid-cols-2 gap-4">
+                                        {(result.fit.class === 'clearance' || result.fit.class === 'transition') && (
+                                            <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
+                                                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold mb-1">ĐỘ HỞ (Clearance)</div>
+                                                <div className="flex justify-between text-sm font-mono dark:text-slate-300">
+                                                    <span>Smax = {result.fit.Smax} μm</span>
+                                                    {result.fit.class === 'clearance' && <span>Smin = {result.fit.Smin} μm</span>}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {(result.fit.class === 'interference' || result.fit.class === 'transition') && (
+                                            <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-lg p-3">
+                                                <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold mb-1">ĐỘ DÔI (Interference)</div>
+                                                <div className="flex justify-between text-sm font-mono dark:text-slate-300">
+                                                    <span>Nmax = {result.fit.Nmax} μm</span>
+                                                    {result.fit.class === 'interference' && <span>Nmin = {result.fit.Nmin} μm</span>}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </Card>
+
+                                <Card className="p-0 border-l-4 border-l-primary-500">
+                                    <details className="group" open>
+                                        <summary className="p-4 cursor-pointer font-semibold text-slate-800 dark:text-white flex justify-between items-center hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                                            <span><Icon name="graduation-cap" className="text-primary-500 mr-2"/> Xem hướng dẫn tra bảng thủ công (Sư phạm)</span>
+                                            <Icon name="chevron-down" className="transition-transform group-open:rotate-180" />
+                                        </summary>
+                                        <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-sm leading-relaxed text-slate-700 dark:text-slate-300 space-y-2">
+                                            <p><strong>Bước 1:</strong> Xét mối ghép ϕ{result.D} {result.hole.sym}{result.hole.it}/{result.shaft.sym}{result.shaft.it}. Đây là mối ghép theo {result.hole.sym === 'H' ? 'Hệ thống Lỗ cơ sở' : 'Hệ thống Trục cơ sở'}.</p>
+                                            <p><strong>Bước 2:</strong> Với kích thước danh nghĩa <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded">D = {result.D} mm</code>, xác định khoảng kích thước tra bảng ISO 286-2.</p>
+                                            <p><strong>Bước 3:</strong> Tra bảng cho Lỗ <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded">{result.hole.sym}{result.hole.it}</code>: Dung sai {result.hole.T} μm. Sai lệch cơ bản {result.hole.EI === 0 ? 'EI = 0' : `EI = ${result.hole.EI}`} μm. Suy ra <code className="text-hole-text font-bold">ES = {result.hole.ES > 0 ? `+${result.hole.ES}` : result.hole.ES} μm</code>.</p>
+                                            <p><strong>Bước 4:</strong> Tra bảng cho Trục <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded">{result.shaft.sym}{result.shaft.it}</code>: Dung sai {result.shaft.T} μm. Sai lệch cơ bản <code className="text-shaft-text font-bold">es = {result.shaft.es} μm</code>. Suy ra <code className="text-shaft-text font-bold">ei = {result.shaft.ei} μm</code>.</p>
+                                            <p><strong>Kết luận:</strong> Dựa vào đặc tính Smax = {result.fit.Smax} μm và Smin = {result.fit.Smin} μm (hoặc N), đây là mối ghép <strong className="text-primary-600">{result.fit.type}</strong>.</p>
+                                        </div>
+                                    </details>
+                                </Card>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {result && result.error && (
+                        <div className="bg-rose-100 border border-rose-400 text-rose-700 px-4 py-3 rounded relative" role="alert">
+                            <strong className="font-bold">Lỗi! </strong>
+                            <span className="block sm:inline">{result.error}</span>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const LibraryScreen = () => {
+            const [searchTerm, setSearchTerm] = useState("");
+            const [activeTab, setActiveTab] = useState("fits");
+            const [fitCategoryFilter, setFitCategoryFilter] = useState("all");
+
+            const filteredFits = useMemo(() => {
+                return ISO_LIBRARY_FITS.filter(item => {
+                    const matchesCategory = fitCategoryFilter === 'all' || item.category === fitCategoryFilter;
+                    const matchesSearch = searchTerm === "" || 
+                        item.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        item.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        item.app.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        item.feature.toLowerCase().includes(searchTerm.toLowerCase());
+                    return matchesCategory && matchesSearch;
+                });
+            }, [searchTerm, fitCategoryFilter]);
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
+                                <Icon name="book-bookmark" className="text-primary-600" /> Thư Viện Tiêu Chuẩn ISO 286
+                            </h2>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Kho tra cứu dữ liệu kỹ thuật: Cấp IT, Sai lệch cơ bản & Khuyến cáo kiểu lắp công nghiệp.</p>
+                        </div>
+
+                        <div className="relative w-full md:w-80">
+                            <Icon name="magnifying-glass" className="absolute left-3 top-3 text-slate-400" />
+                            <input 
+                                type="text"
+                                value={searchTerm}
+                                onChange={e => setSearchTerm(e.target.value)}
+                                placeholder="Tìm kiểu lắp, ứng dụng, H7/g6..."
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 shadow-sm"
+                            />
+                            {searchTerm && (
+                                <button onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                                    <Icon name="xmark" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+                        <button 
+                            onClick={() => setActiveTab('fits')}
+                            className={`px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${activeTab === 'fits' ? 'bg-primary-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>
+                            <Icon name="sliders" /> Kho Kiểu Lắp Tiêu Chuẩn ({ISO_LIBRARY_FITS.length})
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('it_matrix')}
+                            className={`px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${activeTab === 'it_matrix' ? 'bg-primary-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>
+                            <Icon name="table-cells" /> Bảng Cấp Chính Xác IT (IT5 - IT11)
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('deviations')}
+                            className={`px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${activeTab === 'deviations' ? 'bg-primary-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>
+                            <Icon name="diagram-project" /> Sai Lệch Cơ Bản (Trục & Lỗ)
+                        </button>
+                    </div>
+
+                    {activeTab === 'fits' && (
+                        <div className="space-y-6">
+                            <div className="flex items-center gap-2 text-xs flex-wrap">
+                                <span className="text-slate-500 font-semibold mr-2">Đặc tính:</span>
+                                {[
+                                    { id: 'all', name: 'Tất cả mối ghép' },
+                                    { id: 'clearance', name: 'Lắp hở (Clearance)' },
+                                    { id: 'transition', name: 'Lắp trung gian (Transition)' },
+                                    { id: 'interference', name: 'Lắp dôi (Interference)' }
+                                ].map(cat => (
+                                    <button 
+                                        key={cat.id}
+                                        onClick={() => setFitCategoryFilter(cat.id)}
+                                        className={`px-3 py-1.5 rounded-full border transition-colors font-medium ${fitCategoryFilter === cat.id ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}`}>
+                                        {cat.name}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {filteredFits.map((fit, idx) => (
+                                    <Card key={idx} className="p-5 flex flex-col justify-between hover:shadow-md transition-shadow border-t-4 border-t-primary-500">
+                                        <div>
+                                            <div className="flex justify-between items-start mb-3">
+                                                <span className="font-mono text-2xl font-bold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950/40 px-3 py-1 rounded-lg border border-primary-200 dark:border-primary-800">
+                                                    {fit.symbol}
+                                                </span>
+                                                <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
+                                                    fit.category === 'clearance' ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400' :
+                                                    fit.category === 'interference' ? 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 dark:text-rose-400' :
+                                                    'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400'
+                                                }`}>
+                                                    {fit.category === 'clearance' ? 'Lắp hở' : fit.category === 'interference' ? 'Lắp dôi' : 'Trung gian'}
+                                                </span>
+                                            </div>
+
+                                            <h4 className="font-bold text-base text-slate-800 dark:text-white mb-2">{fit.type}</h4>
+                                            
+                                            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                                                <div>
+                                                    <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-0.5"><Icon name="wrench" className="mr-1 text-slate-400"/> Ứng dụng thực tế:</span>
+                                                    <p className="bg-slate-50 dark:bg-slate-900/60 p-2 rounded border border-slate-200 dark:border-slate-700/60 leading-relaxed">{fit.app}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-0.5"><Icon name="circle-info" className="mr-1 text-slate-400"/> Đặc tính cơ học:</span>
+                                                    <p className="leading-relaxed">{fit.feature}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'it_matrix' && (
+                        <Card className="p-6 overflow-x-auto">
+                            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                <Icon name="table" className="text-primary-500" /> Bảng Giá Trị Dung Sai Tiêu Chuẩn IT5 - IT11 (Đơn vị: μm)
+                            </h3>
+                            <p className="text-xs text-slate-500 mb-4">* Tra cứu nhanh giá trị dung sai T tương ứng với cấp chính xác và khoảng kích thước danh nghĩa D (mm).</p>
+                            
+                            <table className="w-full text-xs font-mono text-center border-collapse border border-slate-300 dark:border-slate-700">
+                                <thead>
+                                    <tr className="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                                        <th className="border border-slate-300 dark:border-slate-700 p-2">Khoảng D (mm)</th>
+                                        {Object.keys(ISO_DB.itGrades).map(grade => (
+                                            <th key={grade} className="border border-slate-300 dark:border-slate-700 p-2 bg-primary-50 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300 font-bold">
+                                                IT{grade}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {ISO_DB.sizeRanges.map((range, idx) => (
+                                        <tr key={range.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                                            <td className="border border-slate-300 dark:border-slate-700 p-2 font-bold bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                                &gt; {range.min} - {range.max}
+                                            </td>
+                                            {Object.keys(ISO_DB.itGrades).map(grade => (
+                                                <td key={grade} className="border border-slate-300 dark:border-slate-700 p-2 text-slate-800 dark:text-slate-200">
+                                                    {ISO_DB.itGrades[grade][idx]}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </Card>
+                    )}
+
+                    {activeTab === 'deviations' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <Card className="p-6">
+                                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-3 flex items-center gap-2">
+                                    <Icon name="circle" className="text-shaft-text" /> Sai Lệch Cơ Bản Của Trục (es hoặc ei)
+                                </h3>
+                                <p className="text-xs text-slate-500 mb-4">• Trục a → h: Sai lệch trên es ≤ 0<br/>• Trục k → zc: Sai lệch dưới ei ≥ 0</p>
+                                
+                                <div className="space-y-3 font-mono text-xs">
+                                    {Object.keys(ISO_DB.shaftDeviations).slice(0, 10).map(sym => (
+                                        <div key={sym} className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
+                                            <div className="font-bold text-sm text-shaft-text flex justify-between">
+                                                <span>Miền Trục: '{sym}'</span>
+                                                <span className="text-slate-500 text-xs font-normal">
+                                                    {['a','b','c','cd','d','e','ef','f','fg','g','h'].includes(sym) ? 'Quy định es' : sym === 'js' ? 'Đối xứng ±IT/2' : 'Quy định ei'}
+                                                </span>
+                                            </div>
+                                            <div className="mt-2 text-slate-600 dark:text-slate-300 flex flex-wrap gap-1.5">
+                                                {ISO_DB.shaftDeviations[sym].slice(0, 7).map((val, i) => (
+                                                    <span key={i} className="bg-white dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">
+                                                        {val > 0 ? `+${val}` : val}
+                                                    </span>
+                                                ))}
+                                                <span className="text-slate-400 self-center">...</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </Card>
+
+                            <Card className="p-6">
+                                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-3 flex items-center gap-2">
+                                    <Icon name="circle-dot" className="text-hole-text" /> Sai Lệch Cơ Bản Của Lỗ (ES hoặc EI)
+                                </h3>
+                                <p className="text-xs text-slate-500 mb-4">• Lỗ A → H: Sai lệch dưới EI ≥ 0<br/>• Lỗ K → ZC: Sai lệch trên ES ≤ 0</p>
+                                
+                                <div className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                                    <div className="p-4 bg-hole-bg border border-hole-border rounded-lg text-hole-text">
+                                        <div className="font-bold text-sm mb-1">Lỗ Cơ Sở 'H' (Phổ biến nhất)</div>
+                                        <p>Luôn có Sai lệch giới hạn dưới EI = 0. Sai lệch trên ES = +IT. Đây là nền tảng cho Hệ thống Lỗ cơ sở.</p>
+                                    </div>
+
+                                    <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
+                                        <div className="font-bold text-slate-800 dark:text-white mb-1">Quy Tắc Đảo Dấu (Trục → Lỗ):</div>
+                                        <p className="leading-relaxed">Sai lệch cơ bản của Lỗ có giá trị tuyệt đối bằng sai lệch cơ bản của Trục cùng tên ký hiệu bằng chữ hoa, nhưng trái dấu (EI = -es hoặc ES = -ei).</p>
+                                    </div>
+                                </div>
+                            </Card>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const TASK_REQUIREMENTS_20 = [
+            { id: "req_ES", name: "1. Tra Sai lệch giới hạn trên của Lỗ (ES)", key: "ES", category: "tra_cuu", baseWeight: 0.75 },
+            { id: "req_EI", name: "2. Tra Sai lệch giới hạn dưới của Lỗ (EI)", key: "EI", category: "tra_cuu", baseWeight: 0.75 },
+            { id: "req_es", name: "3. Tra Sai lệch giới hạn trên của Trục (es)", key: "es", category: "tra_cuu", baseWeight: 0.75 },
+            { id: "req_ei", name: "4. Tra Sai lệch giới hạn dưới của Trục (ei)", key: "ei", category: "tra_cuu", baseWeight: 0.75 },
+            { id: "req_Dmax", name: "5. Tính Kích thước giới hạn lớn nhất Lỗ (Dmax)", key: "Dmax", category: "kich_thuoc", baseWeight: 0.65 },
+            { id: "req_Dmin", name: "6. Tính Kích thước giới hạn nhỏ nhất Lỗ (Dmin)", key: "Dmin", category: "kich_thuoc", baseWeight: 0.65 },
+            { id: "req_dmax", name: "7. Tính Kích thước giới hạn lớn nhất Trục (dmax)", key: "dmax", category: "kich_thuoc", baseWeight: 0.65 },
+            { id: "req_dmin", name: "8. Tính Kích thước giới hạn nhỏ nhất Trục (dmin)", key: "dmin", category: "kich_thuoc", baseWeight: 0.65 },
+            { id: "req_TD", name: "9. Tính Dung sai Lỗ (TD)", key: "TD", category: "kich_thuoc", baseWeight: 0.5 },
+            { id: "req_Td", name: "10. Tính Dung sai Trục (Td)", key: "Td", category: "kich_thuoc", baseWeight: 0.5 },
+            { id: "req_Smax", name: "11. Tính Độ hở lớn nhất (Smax)", key: "Smax", category: "dac_tinh", baseWeight: 0.5 },
+            { id: "req_Smin", name: "12. Tính Độ hở nhỏ nhất (Smin)", key: "Smin", category: "dac_tinh", baseWeight: 0.5 },
+            { id: "req_Nmax", name: "13. Tính Độ dôi lớn nhất (Nmax)", key: "Nmax", category: "dac_tinh", baseWeight: 0.5 },
+            { id: "req_Nmin", name: "14. Tính Độ dôi nhỏ nhất (Nmin)", key: "Nmin", category: "dac_tinh", baseWeight: 0.5 },
+            { id: "req_TSN", name: "15. Tính Dung sai lắp ghép (TS,N)", key: "TSN", category: "dac_tinh", baseWeight: 0.6 },
+            { id: "req_fitType", name: "16. Xác định Đặc tính kiểu lắp (Lỏng / Chặt / Trung gian)", key: "fitType", category: "dac_tinh", baseWeight: 0.8 },
+            { id: "req_diagram", name: "17. Vẽ sơ đồ biểu diễn miền dung sai mối ghép", key: "diagram", category: "do_thi", baseWeight: 1.5 },
+            { id: "req_IT", name: "18. Xác định Cấp chính xác tiêu chuẩn IT", key: "IT", category: "tra_cuu", baseWeight: 0.5 },
+            { id: "req_range", name: "19. Tra khoảng kích thước danh nghĩa (D1, D2]", key: "range", category: "tra_cuu", baseWeight: 0.5 },
+            { id: "req_machining", name: "20. Đánh giá tính lắp lẫn chức năng & yêu cầu gia công", key: "machining", category: "trinh_bay", baseWeight: 1.0 }
+        ];
+
+        const LearningScreen = () => {
+            const [activeSubTab, setActiveSubTab] = useState('glossary');
+            const [selectedDesignA, setSelectedDesignA] = useState('H7/g6');
+            const [selectedDesignB, setSelectedDesignB] = useState('H7/k6');
+
+            const glossaryTerms = [
+                { term: "Kích thước danh nghĩa (D, d)", symbol: "D", desc: "Kích thước được xác định xuất phát từ tính toán động học, sức bền và dùng để làm cơ sở tính toán sai lệch giới hạn." },
+                { term: "Sai lệch giới hạn trên (ES, es)", symbol: "ES / es", desc: "Hiệu đại số giữa kích thước giới hạn lớn nhất và kích thước danh nghĩa. ES = Dmax - D (Lỗ), es = dmax - d (Trục)." },
+                { term: "Sai lệch giới hạn dưới (EI, ei)", symbol: "EI / ei", desc: "Hiệu đại số giữa kích thước giới hạn nhỏ nhất và kích thước danh nghĩa. EI = Dmin - D (Lỗ), ei = dmin - d (Trục)." },
+                { term: "Dung sai kích thước (TD, Td)", symbol: "IT / T", desc: "Phạm vi sai lệch kích thước cho phép. T = Dmax - Dmin = ES - EI (Lỗ) hoặc Td = es - ei (Trục). Kích thước luôn dương." },
+                { term: "Độ hở (Clearance - S)", symbol: "S", desc: "Sự chênh lệch giữa kích thước Lỗ và Trục khi D > d. Smax = Dmax - dmin = ES - ei; Smin = Dmin - dmax = EI - es." },
+                { term: "Độ dôi (Interference - N)", symbol: "N", desc: "Sự chênh lệch giữa kích thước Trục và Lỗ trước khi lắp ghép khi d > D. Nmax = dmax - Dmin = es - EI; Nmin = dmin - Dmax = ei - ES." },
+                { term: "Đường Không (Zero Line)", symbol: "0 - 0", desc: "Đường thẳng nằm ngang tương ứng với kích thước danh nghĩa D, làm gốc tính các sai lệch giới hạn trên sơ đồ dung sai." }
+            ];
+
+            const designExamples = {
+                'H7/g6': { type: "Lắp trượt chính xác", category: "Lắp lỏng", Smax: "+34 μm", Smin: "+9 μm", precision: "Cao", cost: "Trung bình - Cao", app: "Trục con lăn máy công cụ, pít-tông thủy lực nhẹ", machining: "Mài tròn ngoài / Doa tinh lỗ" },
+                'H7/f7': { type: "Lắp quay tự do", category: "Lắp lỏng", Smax: "+50 μm", Smin: "+16 μm", precision: "Trung bình", cost: "Trung bình", app: "Ổ lót trục quay tốc độ vừa, bánh răng quay tự do", machining: "Tiện tinh trục / Doa lỗ" },
+                'H7/k6': { type: "Lắp định vị chịu tải nhẹ", category: "Lắp trung gian", Smax: "+15 μm", Nmax: "-11 μm", precision: "Rất cao", cost: "Cao", app: "Bánh răng cố định trên trục dùng key, vành lăn ổ đỡ", machining: "Mài chính xác cao cả trục và lỗ" },
+                'H7/p6': { type: "Lắp ép nhẹ", category: "Lắp dôi", Nmax: "33 μm", Nmin: "9 μm", precision: "Rất cao", cost: "Cao", app: "Bạc lót đồng ép vào thân hộp, vành bánh răng", machining: "Tiện tinh chính xác / Ép thủy lực" },
+                'H7/s6': { type: "Lắp ép nặng (Gia nhiệt)", category: "Lắp dôi", Nmax: "59 μm", Nmin: "35 μm", precision: "Cực cao", cost: "Rất cao", app: "Bánh xe lửa, vành thép truyền momen xoắn cực lớn", machining: "Mài tròn chính xác / Gia nhiệt nung nóng Lỗ" }
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
+                        <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
+                            <Icon name="graduation-cap" className="text-primary-600" /> Màn Hình Hướng Dẫn Học Tập (Learning Mode)
+                        </h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Hệ thống bài giảng tích hợp: Khái niệm, Thuật ngữ, Bài tập mẫu step-by-step & So sánh phương án thiết kế.</p>
+                    </div>
+
+                    <div className="flex gap-2 border-b border-slate-200 dark:border-slate-700 pb-3 flex-wrap">
+                        {[
+                            { id: 'glossary', label: '1. Thuật ngữ & Khái niệm', icon: 'book' },
+                            { id: 'walkthrough', label: '2. Bài tập mẫu & Hướng dẫn 5 bước', icon: 'list-check' },
+                            { id: 'comparison', label: '3. So sánh Phương án Thiết kế', icon: 'code-compare' },
+                            { id: 'real_world', label: '4. Mô hình Chi tiết Máy thực tế', icon: 'gears' }
+                        ].map(tab => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveSubTab(tab.id)}
+                                className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${activeSubTab === tab.id ? 'bg-primary-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>
+                                <Icon name={tab.icon} /> {tab.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* SubTab 1: Glossary */}
+                    {activeSubTab === 'glossary' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {glossaryTerms.map((g, idx) => (
+                                <Card key={idx} className="p-5 border-t-4 border-t-primary-500 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h4 className="font-bold text-slate-800 dark:text-white text-base">{g.term}</h4>
+                                        <span className="bg-primary-100 dark:bg-primary-950/60 text-primary-700 dark:text-primary-300 font-mono text-xs px-2 py-1 rounded font-bold border border-primary-300">
+                                            {g.symbol}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mt-2">{g.desc}</p>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* SubTab 2: Step by Step Walkthrough */}
+                    {activeSubTab === 'walkthrough' && (
+                        <div className="space-y-6">
+                            <Card className="p-6 bg-slate-900 text-white">
+                                <div className="flex justify-between items-center border-b border-slate-700 pb-3 mb-4">
+                                    <h3 className="font-bold text-lg text-amber-400 flex items-center gap-2">
+                                        <Icon name="lightbulb" /> BÀI TẬP MẪU CHUẨN SƯ PHẠM
+                                    </h3>
+                                    <span className="bg-amber-500/20 text-amber-300 text-xs px-3 py-1 rounded-full border border-amber-500/40 font-mono">Đề bài: ϕ40 H7/f7</span>
+                                </div>
+                                <p className="text-sm text-slate-300">Cho mối ghép trụ tròn ϕ40 H7/f7. Hãy tính toán tất cả các thông số dung sai, xác định đặc tính kiểu lắp và vẽ sơ đồ miền dung sai.</p>
+                            </Card>
+
+                            <div className="space-y-4">
+                                {[
+                                    {
+                                        step: "Bước 1",
+                                        title: "Phân tích Hệ thống & Kích thước danh nghĩa",
+                                        content: "Mối ghép có Kích thước danh nghĩa D = 40 mm. Lỗ mang ký hiệu H (chữ hoa H = Hệ thống Lỗ cơ sở, luôn có EI = 0). Trục mang ký hiệu f (chữ thường f = Trục sai lệch dưới zero)."
+                                    },
+                                    {
+                                        step: "Bước 2",
+                                        title: "Tra bảng Dung sai IT & Sai lệch cơ bản",
+                                        content: "Kích thước D = 40mm nằm trong khoảng (30 - 50] mm:\n• Lỗ H7: Cấp IT7 → Dung sai TD = 25 μm. Vì là Lỗ H nên EI = 0 → ES = EI + TD = +25 μm.\n• Trục f7: Cấp IT7 → Dung sai Td = 25 μm. Sai lệch cơ bản của trục f là es = -25 μm → ei = es - Td = -25 - 25 = -50 μm."
+                                    },
+                                    {
+                                        step: "Bước 3",
+                                        title: "Tính các Kích thước Giới hạn (Dmax, Dmin, dmax, dmin)",
+                                        content: "• Lỗ: Dmax = D + ES = 40 + 0.025 = 40.025 mm | Dmin = D + EI = 40.000 mm.\n• Trục: dmax = D + es = 40 - 0.025 = 39.975 mm | dmin = D + ei = 40 - 0.050 = 39.950 mm."
+                                    },
+                                    {
+                                        step: "Bước 4",
+                                        title: "Tính Thông số Lắp ghép & Kết luận Đặc tính",
+                                        content: "• Độ hở lớn nhất: Smax = Dmax - dmin = ES - ei = (+25) - (-50) = +75 μm (0.075 mm).\n• Độ hở nhỏ nhất: Smin = Dmin - dmax = EI - es = 0 - (-25) = +25 μm (0.025 mm).\n• Vì Smin > 0, đây là KIỂU LẮP HỞ (Clearance Fit).\n• Dung sai kiểu lắp: TS = TD + Td = 25 + 25 = 50 μm."
+                                    },
+                                    {
+                                        step: "Bước 5",
+                                        title: "Vẽ Sơ đồ Miền Dung sai & Đánh giá Công nghệ",
+                                        content: "Vẽ Đường 0-0 tương ứng D = 40 mm. Miền Lỗ H7 nằm hoàn toàn phía trên Đường 0-0 (từ 0 đến +25 μm). Miền Trục f7 nằm hoàn toàn phía dưới Đường 0-0 (từ -25 μm đến -50 μm). Khoảng cách giữa 2 miền chính là Smin = 25 μm."
+                                    }
+                                ].map((s, idx) => (
+                                    <Card key={idx} className="p-5 border-l-4 border-l-primary-600">
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <span className="bg-primary-600 text-white font-mono font-bold text-xs px-2.5 py-1 rounded">
+                                                {s.step}
+                                            </span>
+                                            <h4 className="font-bold text-slate-800 dark:text-white text-base">{s.title}</h4>
+                                        </div>
+                                        <div className="text-sm text-slate-700 dark:text-slate-300 font-mono whitespace-pre-line leading-relaxed pl-1 bg-slate-50 dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-800">
+                                            {s.content}
+                                        </div>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* SubTab 3: Design Comparison */}
+                    {activeSubTab === 'comparison' && (
+                        <div className="space-y-6">
+                            <Card className="p-6">
+                                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                    <Icon name="code-compare" className="text-primary-600" /> So Sánh 2 Phương Án Thiết Kế Dung Sai
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Phương án A:</label>
+                                        <select 
+                                            value={selectedDesignA} 
+                                            onChange={e => setSelectedDesignA(e.target.value)}
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 font-mono text-sm font-bold text-slate-900 dark:text-white">
+                                            {Object.keys(designExamples).map(k => <option key={k} value={k}>{k} - {designExamples[k].type}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Phương án B:</label>
+                                        <select 
+                                            value={selectedDesignB} 
+                                            onChange={e => setSelectedDesignB(e.target.value)}
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 font-mono text-sm font-bold text-slate-900 dark:text-white">
+                                            {Object.keys(designExamples).map(k => <option key={k} value={k}>{k} - {designExamples[k].type}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                            </Card>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {[
+                                    { title: `Phương án A: ${selectedDesignA}`, data: designExamples[selectedDesignA] },
+                                    { title: `Phương án B: ${selectedDesignB}`, data: designExamples[selectedDesignB] }
+                                ].map((item, i) => (
+                                    <Card key={i} className="p-5 border-t-4 border-t-indigo-600 space-y-3">
+                                        <h4 className="font-bold text-indigo-600 dark:text-indigo-400 text-lg border-b pb-2">{item.title}</h4>
+                                        <div className="space-y-2 text-xs">
+                                            <div className="flex justify-between py-1 border-b">
+                                                <span className="text-slate-500">Phân loại:</span>
+                                                <span className="font-bold">{item.data.category} ({item.data.type})</span>
+                                            </div>
+                                            <div className="flex justify-between py-1 border-b">
+                                                <span className="text-slate-500">Độ hở/dôi giới hạn:</span>
+                                                <span className="font-mono font-bold text-emerald-600">{item.data.Smax || item.data.Nmax}</span>
+                                            </div>
+                                            <div className="flex justify-between py-1 border-b">
+                                                <span className="text-slate-500">Mức chính xác gia công:</span>
+                                                <span className="font-bold">{item.data.precision}</span>
+                                            </div>
+                                            <div className="flex justify-between py-1 border-b">
+                                                <span className="text-slate-500">Chi phí chế tạo:</span>
+                                                <span className="font-bold text-amber-600">{item.data.cost}</span>
+                                            </div>
+                                            <div className="py-1">
+                                                <span className="text-slate-500 block mb-1">Phương pháp gia công khuyến cáo:</span>
+                                                <span className="font-mono bg-slate-100 dark:bg-slate-900 p-2 rounded block">{item.data.machining}</span>
+                                            </div>
+                                            <div className="py-1">
+                                                <span className="text-slate-500 block mb-1">Phạm vi ứng dụng tiêu biểu:</span>
+                                                <p className="text-slate-700 dark:text-slate-300 leading-relaxed">{item.data.app}</p>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* SubTab 4: Real World Models */}
+                    {activeSubTab === 'real_world' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {[
+                                { name: "Cụm Pít-tông & Xi-lanh Thủy lực", fit: "H7/g6", icon: "drum", desc: "Cần di chuyển dọc trục trơn tru, chống lọt khí dịch thủy lực ở áp suất làm việc cao.", req: "Độ hở cực nhỏ, yêu cầu gia công mài chính xác cao." },
+                                { name: "Cụm Bánh răng Truyền động trên Trục", fit: "H7/k6", icon: "gear", desc: "Bánh răng cố định trên trục nhờ chìa khóa (key).", req: "Lắp trung gian có độ dôi nhẹ để chống lắc rơ hướng kính." },
+                                { name: "Cụm Bạc lót Đồng Ép Thân Hộp", fit: "H7/p6", icon: "circle-notch", desc: "Bạc lót được ép cố định vào lỗ thân máy bằng máy ép lực.", req: "Lắp dôi hoàn toàn để bạc không bị xoay trong quá trình làm việc." },
+                                { name: "Cụm Vành Ổ Lăn trên Trục Quay", fit: "k5 hoặc m5", icon: "compact-disc", desc: "Vành trong ổ lăn chịu tải trọng quay.", req: "Tránh trượt tương đối giữa vành ổ và cổ trục gây mòn vẹt." }
+                            ].map((m, idx) => (
+                                <Card key={idx} className="p-5 flex gap-4 items-start">
+                                    <div className="w-12 h-12 rounded-lg bg-primary-100 dark:bg-primary-950/60 text-primary-600 dark:text-primary-400 flex items-center justify-center text-2xl shrink-0">
+                                        <Icon name={m.icon} />
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <h4 className="font-bold text-slate-800 dark:text-white text-base">{m.name}</h4>
+                                            <span className="font-mono text-xs font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded border border-amber-300">
+                                                {m.fit}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">{m.desc}</p>
+                                        <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded text-slate-500 font-mono">
+                                            Yêu cầu: {m.req}
+                                        </div>
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const GeneratorScreen = () => {
+            const [generationMode, setGenerationMode] = useState("student_list");
+            const [numQuestions, setNumQuestions] = useState(25);
+            const [difficulty, setDifficulty] = useState("trungbinh");
+            
+            const [mixRatio, setMixRatio] = useState({ easy: 30, medium: 40, hard: 30 });
+            
+            const [studentListText, setStudentListText] = useState(
+                "2021001\tNguyễn Văn A\t21CK1\tME2026\n" +
+                "2021002\tTrần Thị B\t21CK1\tME2026\n" +
+                "2021003\tLê Hoàng C\t21CK2\tME2026\n" +
+                "2021004\tPhạm Minh D\t21CK2\tME2026\n" +
+                "2021005\tVũ Đức E\t21CK3\tME2026"
+            );
+
+            const [selectedTaskIds, setSelectedTaskIds] = useState(
+                TASK_REQUIREMENTS_20.slice(0, 17).map(t => t.id)
+            );
+
+            const [examData, setExamData] = useState(null);
+            const [isGenerating, setIsGenerating] = useState(false);
+            
+            // Thêm các state quản lý tiến trình xuất file từ Backend
+            const [isExportingDocx, setIsExportingDocx] = useState(false);
+            const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+            const toggleTask = (id) => {
+                setSelectedTaskIds(prev => 
+                    prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+                );
+            };
+
+            const selectAllTasks = () => setSelectedTaskIds(TASK_REQUIREMENTS_20.map(t => t.id));
+            const deselectAllTasks = () => setSelectedTaskIds([]);
+
+            const diffConfigs = {
+                de: { name: "Dễ", sizes: [20, 30, 40, 50, 60], holes: ['H7', 'H8'], shafts: ['f7', 'g6', 'h6'] },
+                trungbinh: { name: "Trung bình", sizes: [25, 45, 80, 100, 120], holes: ['H7', 'H8'], shafts: ['k6', 'js6', 'p6'] },
+                kha: { name: "Khá", sizes: [15, 35, 65, 110, 150], holes: ['H7', 'F7', 'P7'], shafts: ['f6', 'm6', 'n6'] },
+                kho: { name: "Khó", sizes: [6, 12, 180, 220, 300], holes: ['JS7', 'K7', 'M7'], shafts: ['h5', 'g5', 'r6'] },
+                nangcao1: { name: "Nâng cao 1", sizes: [4, 8, 250, 350, 450], holes: ['N7', 'P7', 'F8'], shafts: ['e8', 's6', 't6'] },
+                nangcao2: { name: "Nâng cao 2", sizes: [2, 5, 315, 420, 500], holes: ['H7', 'F8', 'P7'], shafts: ['u6', 'v6', 'z6'] }
+            };
+
+            const handleGenerate = () => {
+                setIsGenerating(true);
+                
+                setTimeout(() => {
+                    const questions = [];
+                    const usedCombinations = new Set();
+
+                    let students = [];
+                    if (generationMode === 'student_list') {
+                        const lines = studentListText.split('\n').filter(l => l.trim() !== '');
+                        students = lines.map((line, idx) => {
+                            const parts = line.split(/[\t,;|]/).map(p => p.trim());
+                            return {
+                                mssv: parts[0] || `SV2026_${idx+1}`,
+                                name: parts[1] || `Sinh viên ${idx+1}`,
+                                className: parts[2] || 'Lớp Kỹ Thuật',
+                                classCode: parts[3] || 'ISO-2026'
+                            };
+                        });
+                    } else {
+                        const count = Math.max(1, parseInt(numQuestions) || 1);
+                        for (let i = 0; i < count; i++) {
+                            students.push({
+                                mssv: `TU_DO_${String(i+1).padStart(3, '0')}`,
+                                name: `Thí sinh ${i+1}`,
+                                className: 'Lớp Tự Chọn',
+                                classCode: 'DNTU-EXAM'
+                            });
+                        }
+                    }
+
+                    const getDiffForIndex = (index, total) => {
+                        if (difficulty !== 'honhop') return difficulty;
+                        const easyCount = Math.round(total * (mixRatio.easy / 100));
+                        const mediumCount = Math.round(total * (mixRatio.medium / 100));
+                        if (index < easyCount) return 'de';
+                        if (index < easyCount + mediumCount) return 'trungbinh';
+                        return 'kho';
+                    };
+
+                    students.forEach((student, idx) => {
+                        const currentDiffKey = getDiffForIndex(idx, students.length);
+                        const cfg = diffConfigs[currentDiffKey] || diffConfigs.trungbinh;
+
+                        let baseD = cfg.sizes[idx % cfg.sizes.length];
+                        let offsetD = (idx % 3) - 1; 
+                        let D = Math.max(1, baseD + offsetD);
+
+                        let holeSymbol = cfg.holes[idx % cfg.holes.length];
+                        let shaftSymbol = cfg.shafts[(idx + Math.floor(idx / cfg.holes.length)) % cfg.shafts.length];
+
+                        let combo = `${student.mssv}-${D}-${holeSymbol}-${shaftSymbol}`;
+                        if (usedCombinations.has(combo)) {
+                            D += 2; 
+                        }
+                        usedCombinations.add(combo);
+
+                        const calcResult = DualEngineMath.calculate(D, holeSymbol, shaftSymbol);
+                        if (!calcResult.error) {
+                            questions.push({
+                                ...calcResult,
+                                student,
+                                diffLabel: cfg.name,
+                                examCode: `${student.classCode || 'ISO'}-${student.mssv}`
+                            });
+                        }
+                    });
+
+                    const stats = {
+                        total: questions.length,
+                        clearance: questions.filter(q => q.fit.class === 'clearance').length,
+                        transition: questions.filter(q => q.fit.class === 'transition').length,
+                        interference: questions.filter(q => q.fit.class === 'interference').length,
+                        batchCode: `ISO286-${Date.now().toString().slice(-6)}`
+                    };
+
+                    // Compute dynamic standardized university rubric weights summing to exactly 10.0 points
+                    const activeTasksList = TASK_REQUIREMENTS_20.filter(t => selectedTaskIds.includes(t.id));
+                    const totalBaseWeight = activeTasksList.reduce((acc, t) => acc + t.baseWeight, 0);
+                    
+                    const normalizedRubricTasks = activeTasksList.map(t => {
+                        const calculatedPoints = Math.round((t.baseWeight / totalBaseWeight) * 10 * 2) / 2; // Round to nearest 0.5
+                        return {
+                            ...t,
+                            points: calculatedPoints > 0 ? calculatedPoints : 0.5
+                        };
+                    });
+
+                    // Fine adjustment so sum equals exactly 10.0
+                    const currentSum = normalizedRubricTasks.reduce((acc, t) => acc + t.points, 0);
+                    if (normalizedRubricTasks.length > 0 && currentSum !== 10.0) {
+                        const diff = Math.round((10.0 - currentSum) * 10) / 10;
+                        normalizedRubricTasks[0].points = Math.round((normalizedRubricTasks[0].points + diff) * 10) / 10;
+                    }
+
+                    setExamData({ questions, stats, activeTasks: normalizedRubricTasks });
+                    setIsGenerating(false);
+                }, 400);
+            };
+
+            const printExam = () => window.print();
+
+            // Hàm gọi Backend API để xuất file (Client-Server Architecture)
+            const handleExportServer = async (format) => {
+                if (!examData) return;
+                
+                const setLoader = format === 'docx' ? setIsExportingDocx : setIsExportingPdf;
+                setLoader(true);
+                
+                try {
+                    // API endpoint được cung cấp bởi main.py (FastAPI)
+                    const response = await fetch(`http://127.0.0.1:8000/api/export/${format}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(examData)
+                    });
+                    
+                    if (!response.ok) throw new Error(`Lỗi kết nối Server: ${response.statusText}`);
+                    
+                    // Xử lý stream blob nhị phân để tải về máy
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `De_Thi_ISO286_${examData.stats.batchCode}.${format}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                } catch (error) {
+                    alert(`Giao tiếp Backend thất bại: ${error.message}\n\nVui lòng đảm bảo bạn đã cài đặt các thư viện Python (python-docx, reportlab...) và đang khởi chạy file main.py bằng lệnh:\n\nuvicorn main:app --reload`);
+                    console.error(error);
+                } finally {
+                    setLoader(false);
+                }
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Khởi Tạo Đề Thi Cá Nhân Hóa & Anti-Cheat</h2>
+                            <p className="text-sm text-slate-500 mt-1">Hệ thống tự động biến đổi số liệu theo MSSV, hỗ trợ 6 mức độ khó và 20 yêu cầu bài tập.</p>
+                        </div>
+                    </div>
+
+                    <Card className="p-6 no-print space-y-6">
+                        <div className="flex border-b border-slate-200 dark:border-slate-700 pb-3 gap-4">
+                            <button 
+                                onClick={() => setGenerationMode('student_list')}
+                                className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors ${generationMode === 'student_list' ? 'bg-primary-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                                <Icon name="users" /> Sinh Đề Theo Danh Sách Sinh Viên (Chống Sao Chép)
+                            </button>
+                            <button 
+                                onClick={() => setGenerationMode('random')}
+                                className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors ${generationMode === 'random' ? 'bg-primary-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                                <Icon name="list-ol" /> Sinh Đề Theo Số Lượng Tự Nhập
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {generationMode === 'student_list' ? (
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                        Nhập Danh Sách Sinh Viên (MSSV, Họ Tên, Lớp, Mã Lớp):
+                                    </label>
+                                    <textarea 
+                                        rows={4}
+                                        value={studentListText}
+                                        onChange={e => setStudentListText(e.target.value)}
+                                        placeholder="Mỗi dòng 1 sinh viên: MSSV[Tab/Phẩy]Họ tên[Tab/Phẩy]Lớp[Tab/Phẩy]Mã lớp"
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
+                                    />
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                        Số lượng bài tập / đề thi:
+                                    </label>
+                                    <input 
+                                        type="number" 
+                                        min="1" 
+                                        max="500"
+                                        value={numQuestions}
+                                        onChange={e => setNumQuestions(e.target.value)}
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-slate-900 dark:text-white font-mono outline-none focus:ring-2 focus:ring-primary-500"
+                                    />
+                                </div>
+                            )}
+
+                            <div className={generationMode === 'student_list' ? 'md:col-span-1' : 'md:col-span-2'}>
+                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                    Mức độ bài tập:
+                                </label>
+                                <select 
+                                    value={difficulty} 
+                                    onChange={e => setDifficulty(e.target.value)} 
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-slate-900 dark:text-white outline-none font-medium">
+                                    <option value="de">1. Dễ (Kích thước tròn, lắp lỏng tiêu chuẩn)</option>
+                                    <option value="trungbinh">2. Trung bình (Lắp trung gian/chặt phổ biến)</option>
+                                    <option value="kha">3. Khá (Miền dung sai P7, N6, M6)</option>
+                                    <option value="kho">4. Khó (Kích thước nhỏ/lớn, cấp IT5-IT8)</option>
+                                    <option value="nangcao1">5. Nâng cao 1 (Cấp chính xác cao, miền ghép đặc thù)</option>
+                                    <option value="nangcao2">6. Nâng cao 2 (Cực hạn ISO, ép dôi nặng)</option>
+                                    <option value="honhop">★ Phân bổ Hỗn hợp (% Dễ - TB - Khó)</option>
+                                </select>
+
+                                {difficulty === 'honhop' && (
+                                    <div className="mt-3 bg-indigo-50 dark:bg-indigo-950/40 p-3 rounded-lg border border-indigo-200 dark:border-indigo-800 space-y-2 text-xs">
+                                        <div className="font-semibold text-indigo-700 dark:text-indigo-300">Tỷ lệ phân bổ độ khó (%):</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div>Dễ: <input type="number" value={mixRatio.easy} onChange={e => setMixRatio({...mixRatio, easy: Number(e.target.value)})} className="w-full p-1 border rounded text-center dark:bg-slate-900"/></div>
+                                            <div>TB: <input type="number" value={mixRatio.medium} onChange={e => setMixRatio({...mixRatio, medium: Number(e.target.value)})} className="w-full p-1 border rounded text-center dark:bg-slate-900"/></div>
+                                            <div>Khó: <input type="number" value={mixRatio.hard} onChange={e => setMixRatio({...mixRatio, hard: Number(e.target.value)})} className="w-full p-1 border rounded text-center dark:bg-slate-900"/></div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
+                            <div className="flex justify-between items-center">
+                                <label className="block text-sm font-bold text-slate-800 dark:text-slate-200">
+                                    Yêu cầu bài toán (Tùy chọn mục sinh viên phải thực hiện):
+                                </label>
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={selectAllTasks} className="text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 px-2.5 py-1 rounded text-primary-600 font-semibold">
+                                        Chọn tất cả
+                                    </button>
+                                    <button type="button" onClick={deselectAllTasks} className="text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 px-2.5 py-1 rounded text-rose-600 font-semibold">
+                                        Bỏ chọn hết
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+                                {TASK_REQUIREMENTS_20.map((task) => (
+                                    <label key={task.id} className="flex items-center gap-2 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg hover:border-primary-400 cursor-pointer transition-colors">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedTaskIds.includes(task.id)} 
+                                            onChange={() => toggleTask(task.id)}
+                                            className="w-4 h-4 accent-primary-600 rounded"
+                                        />
+                                        <span className="text-slate-700 dark:text-slate-300 font-medium">{task.name}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="pt-2">
+                            <button 
+                                onClick={handleGenerate} 
+                                disabled={isGenerating || selectedTaskIds.length === 0} 
+                                className="w-full bg-primary-600 hover:bg-primary-700 disabled:bg-slate-400 text-white font-bold rounded-lg p-3 transition-colors flex items-center justify-center gap-2 text-base shadow-md">
+                                {isGenerating ? <Icon name="spinner" className="fa-spin" /> : <Icon name="wand-magic-sparkles" />} 
+                                {isGenerating ? 'Đang khởi tạo bộ đề thi...' : 'TẠO BỘ ĐỀ THI & ĐÁP ÁN CÁ NHÂN HÓA TRÊN TRÌNH DUYỆT'}
+                            </button>
+                        </div>
+                    </Card>
+
+                    {examData && (
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
+                                <Card className="p-4 border-l-4 border-l-primary-500 bg-primary-50 dark:bg-primary-950/20">
+                                    <div className="text-primary-600 dark:text-primary-400 text-xs font-bold">MÃ LÔ ĐỀ THI</div>
+                                    <div className="text-lg font-mono font-bold dark:text-white mt-1">{examData.stats.batchCode}</div>
+                                    <div className="text-xs text-slate-500">Tổng: {examData.stats.total} bài</div>
+                                </Card>
+                                <Card className="p-4 border-l-4 border-l-emerald-500">
+                                    <div className="text-slate-500 text-xs">Lắp Lỏng</div>
+                                    <div className="text-xl font-bold dark:text-white mt-1">{examData.stats.clearance} bài</div>
+                                </Card>
+                                <Card className="p-4 border-l-4 border-l-amber-500">
+                                    <div className="text-slate-500 text-xs">Lắp Trung Gian</div>
+                                    <div className="text-xl font-bold dark:text-white mt-1">{examData.stats.transition} bài</div>
+                                </Card>
+                                <Card className="p-4 border-l-4 border-l-rose-500">
+                                    <div className="text-slate-500 text-xs">Lắp Chặt</div>
+                                    <div className="text-xl font-bold dark:text-white mt-1">{examData.stats.interference} bài</div>
+                                </Card>
+                            </div>
+
+                            <div className="flex flex-col xl:flex-row justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm no-print gap-4">
+                                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                                    Đã chọn <strong>{examData.activeTasks.length}/20</strong> yêu cầu cho mỗi đề.
+                                </span>
+                                
+                                <div className="flex gap-3 flex-wrap justify-center">
+                                    <button 
+                                        onClick={printExam} 
+                                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 px-4 py-2.5 rounded-lg font-semibold transition-colors flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-sm">
+                                        <Icon name="print" /> In/Lưu PDF (Trình duyệt)
+                                    </button>
+                                    
+                                    <button 
+                                        onClick={() => handleExportServer('docx')} 
+                                        disabled={isExportingDocx} 
+                                        className="bg-[#2b579a] hover:bg-[#1e3f72] disabled:bg-slate-400 text-white px-5 py-2.5 rounded-lg font-semibold transition-colors flex items-center gap-2 shadow-sm text-sm">
+                                        {isExportingDocx ? <Icon name="spinner" className="fa-spin" /> : <Icon name="file-word" />} 
+                                        Xuất Word (.docx)
+                                    </button>
+
+                                    <button 
+                                        onClick={() => handleExportServer('pdf')} 
+                                        disabled={isExportingPdf} 
+                                        className="bg-[#df2a2a] hover:bg-[#b52222] disabled:bg-slate-400 text-white px-5 py-2.5 rounded-lg font-semibold transition-colors flex items-center gap-2 shadow-sm text-sm">
+                                        {isExportingPdf ? <Icon name="spinner" className="fa-spin" /> : <Icon name="file-pdf" />} 
+                                        Xuất PDF Thực (ReportLab)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bg-white text-black p-0 md:p-8 rounded-lg shadow-sm print:shadow-none print:p-0" id="print-area">
+                                <div className="text-center mb-8 border-b-2 border-slate-800 pb-4 print-only hidden">
+                                    <h1 className="text-2xl font-bold uppercase">BỘ ĐỀ THI & ĐÁP ÁN DUNG SAI LẮP GHÉP (ISO 286)</h1>
+                                    <p className="text-sm">Mã lô kiểm tra: <strong>{examData.stats.batchCode}</strong></p>
+                                </div>
+
+                                {examData.questions.map((q, idx) => (
+                                    <div key={idx} className={`mb-12 pb-12 border-b-2 border-slate-300 print:border-slate-400 print:pb-8 ${idx > 0 ? 'print-break' : ''}`}>
+                                        
+                                        <div className="bg-slate-50 print:bg-transparent p-4 rounded-lg border border-slate-200 print:border-slate-400 mb-6 flex justify-between items-center">
+                                            <div>
+                                                <div className="text-xs uppercase tracking-wider font-bold text-slate-500">Đề Thi Cá Nhân Hóa (Anti-Cheat Variant)</div>
+                                                <h3 className="text-xl font-bold text-slate-900">
+                                                    Họ & Tên: <span className="text-primary-700">{q.student.name}</span>
+                                                </h3>
+                                                <div className="text-sm text-slate-700 flex gap-4 mt-1 font-mono">
+                                                    <span>MSSV: <strong>{q.student.mssv}</strong></span>
+                                                    <span>Lớp: <strong>{q.student.className}</strong></span>
+                                                    <span>Mức độ: <strong>{q.diffLabel}</strong></span>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="w-16 h-16 bg-white border border-slate-300 p-1 flex flex-col items-center justify-center font-mono">
+                                                    <Icon name="qrcode" className="text-3xl text-slate-800" />
+                                                    <span style={{fontSize: '7px'}}>{q.examCode}</span>
+                                                </div>
+                                                <span className="text-xs font-mono text-slate-500 mt-1 block">Mã đề: #{idx+1}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="mb-6">
+                                            <div className="text-lg font-bold mb-2">
+                                                ĐỀ BÀI: Cho mối ghép trụ tròn trơn tiêu chuẩn ISO 286:
+                                                <span className="ml-2 font-mono text-xl bg-amber-100 print:bg-slate-100 px-3 py-1 rounded border border-amber-300 print:border-slate-400">
+                                                    ϕ{q.D} {q.hole.sym}{q.hole.it}/{q.shaft.sym}{q.shaft.it}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-4 bg-slate-50 print:bg-transparent p-4 rounded-lg border border-slate-200">
+                                                <div className="font-semibold mb-2 text-slate-800">Yêu cầu sinh viên thực hiện các mục sau:</div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                                    {examData.activeTasks.map((task) => (
+                                                        <div key={task.id} className="flex items-center gap-1.5">
+                                                            <span className="text-slate-400">•</span>
+                                                            <span>{task.name}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 print:bg-transparent rounded-lg p-6 border border-slate-300 print:border-slate-400 print:text-black">
+                                            <h4 className="font-bold text-primary-700 print:text-black border-b border-slate-300 pb-2 mb-4 text-base flex justify-between">
+                                                <span>ĐÁP ÁN VÀ BÀI GIẢI CHI TIẾT (CÁN BỘ CHẤM THI)</span>
+                                                <span className="font-mono text-xs text-slate-500">Mã SV: {q.student.mssv}</span>
+                                            </h4>
+                                            
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 font-mono text-sm">
+                                                <div className="bg-white print:bg-transparent p-3 rounded border border-slate-200">
+                                                    <div className="font-bold border-b border-slate-200 pb-1 mb-2 text-primary-800">1. Thông số Lỗ ϕ{q.D} {q.hole.sym}{q.hole.it}</div>
+                                                    <div>IT{q.hole.it} = {q.hole.T} μm</div>
+                                                    <div>ES = <strong>{q.hole.ES > 0 ? `+${q.hole.ES}` : q.hole.ES} μm</strong></div>
+                                                    <div>EI = <strong>{q.hole.EI} μm</strong></div>
+                                                    <div>Dmax = <strong>{q.hole.Dmax.toFixed(3)} mm</strong></div>
+                                                    <div>Dmin = <strong>{q.hole.Dmin.toFixed(3)} mm</strong></div>
+                                                    <div>TD = <strong>{q.hole.T} μm</strong></div>
+                                                </div>
+                                                <div className="bg-white print:bg-transparent p-3 rounded border border-slate-200">
+                                                    <div className="font-bold border-b border-slate-200 pb-1 mb-2 text-amber-800">2. Thông số Trục ϕ{q.D} {q.shaft.sym}{q.shaft.it}</div>
+                                                    <div>IT{q.shaft.it} = {q.shaft.T} μm</div>
+                                                    <div>es = <strong>{q.shaft.es > 0 ? `+${q.shaft.es}` : q.shaft.es} μm</strong></div>
+                                                    <div>ei = <strong>{q.shaft.ei > 0 ? `+${q.shaft.ei}` : q.shaft.ei} μm</strong></div>
+                                                    <div>dmax = <strong>{q.shaft.dmax.toFixed(3)} mm</strong></div>
+                                                    <div>dmin = <strong>{q.shaft.dmin.toFixed(3)} mm</strong></div>
+                                                    <div>Td = <strong>{q.shaft.T} μm</strong></div>
+                                                </div>
+                                            </div>
+
+                                            <div className="mb-6 font-mono text-sm border p-3 rounded bg-white print:bg-transparent border-slate-200">
+                                                <div className="font-bold border-b border-slate-200 pb-1 mb-2 font-sans text-rose-700">3. Đặc tính lắp ghép: {q.fit.type.toUpperCase()}</div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>Smax = {q.fit.Smax} μm</div>
+                                                    <div>Smin = {q.fit.Smin} μm</div>
+                                                    <div>Nmax = {q.fit.Nmax} μm</div>
+                                                    <div>TS,N = {q.fit.TN} μm</div>
+                                                </div>
+                                            </div>
+
+                                            {selectedTaskIds.includes("req_diagram") && (
+                                                <div className="mb-6">
+                                                    <div className="font-bold mb-2 text-sm">4. Sơ đồ miền dung sai mối ghép:</div>
+                                                    <div className="bg-white p-2 border border-slate-300 rounded">
+                                                        <SvgToleranceGraph data={q} />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* University Standard Rubric Assessment Table */}
+                                            <div className="mt-6 border-t-2 border-slate-800 pt-4">
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <div className="font-bold text-sm uppercase tracking-wider text-slate-900 flex items-center gap-2">
+                                                        <Icon name="clipboard-check" /> BẢNG BAREM VÀ RUBRIC CHẤM ĐIỂM CHI TIẾT (THANG ĐIỂM 10.0)
+                                                    </div>
+                                                    <span className="text-xs font-mono font-bold bg-slate-200 px-2.5 py-1 rounded">TỔNG ĐIỂM: 10.0 ĐIỂM</span>
+                                                </div>
+                                                
+                                                <table className="w-full text-xs border-collapse border border-slate-400 text-left">
+                                                    <thead>
+                                                        <tr className="bg-slate-200 text-slate-900 font-bold border-b border-slate-400">
+                                                            <th className="border border-slate-400 p-2 w-10 text-center">STT</th>
+                                                            <th className="border border-slate-400 p-2">Tiêu chí đánh giá (Rubric Criterion)</th>
+                                                            <th className="border border-slate-400 p-2 w-36 text-center">Điểm tối đa</th>
+                                                            <th className="border border-slate-400 p-2">Mô tả mức độ Đạt / Không đạt</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {examData.activeTasks.map((t, tIdx) => (
+                                                            <tr key={t.id} className="border-b border-slate-300">
+                                                                <td className="border border-slate-300 p-2 text-center font-mono font-bold">{tIdx + 1}</td>
+                                                                <td className="border border-slate-300 p-2 font-medium text-slate-800">{t.name}</td>
+                                                                <td className="border border-slate-300 p-2 text-center font-bold text-primary-700 font-mono text-sm">{t.points.toFixed(1)}đ</td>
+                                                                <td className="border border-slate-300 p-2 text-slate-600 font-mono text-xs">
+                                                                    • Đạt 100%: Đúng trị số + đơn vị (μm/mm)<br/>
+                                                                    • Đạt 50%: Sai dấu (+/-) hoặc nhầm đơn vị
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                        <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-800">
+                                                            <td colSpan="2" className="border border-slate-400 p-2 text-right uppercase">CỘNG TỔNG ĐIỂM BÀI THI:</td>
+                                                            <td className="border border-slate-400 p-2 text-center font-mono text-base text-rose-700">10.0đ</td>
+                                                            <td className="border border-slate-400 p-2 text-xs font-normal italic">Đã quy chuẩn linh hoạt theo thang điểm 10 đại học.</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeMenu, setActiveMenu] = useState('lookup');
+            const [theme, setTheme] = useState('light');
+
+            useEffect(() => {
+                if (theme === 'dark') document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [theme]);
+
+            const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col transition-all no-print">
+                        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
+                            <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center text-white font-bold font-mono">IS</div>
+                            <span className="font-bold text-white tracking-wide leading-tight">ISO 286<br/><span className="text-xs text-slate-400 font-normal">EdTech Engine</span></span>
+                        </div>
+                        <nav className="flex-1 p-4 space-y-2">
+                            <button 
+                                onClick={() => setActiveMenu('lookup')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeMenu === 'lookup' ? 'bg-primary-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                                <Icon name="magnifying-glass-chart" /> Tra Cứu Trực Quan
+                            </button>
+                            <button 
+                                onClick={() => setActiveMenu('learning')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeMenu === 'learning' ? 'bg-primary-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                                <Icon name="graduation-cap" /> Hướng Dẫn Học Tập
+                            </button>
+                            <button 
+                                onClick={() => setActiveMenu('library')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeMenu === 'library' ? 'bg-primary-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                                <Icon name="book-bookmark" /> Thư Viện ISO 286
+                            </button>
+                            <button 
+                                onClick={() => setActiveMenu('generate')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeMenu === 'generate' ? 'bg-primary-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                                <Icon name="file-circle-check" /> Tạo Đề Tự Động
+                            </button>
+                        </nav>
+                        <div className="p-4 border-t border-slate-800 text-xs text-slate-500">
+                            v2.2 Standard University Rubric & Learning Mode
+                        </div>
+                    </aside>
+
+                    <main className="flex-1 flex flex-col h-screen overflow-y-auto print:overflow-visible relative">
+                        <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-10 no-print">
+                            <h1 className="text-lg font-semibold text-slate-700 dark:text-slate-200">
+                                {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
+                            </h1>
+                            <div className="flex items-center gap-4">
+                                <button onClick={toggleTheme} className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                                    <Icon name={theme === 'light' ? 'moon' : 'sun'} />
+                                </button>
+                                <div className="flex items-center gap-3 pl-4 border-l border-slate-200 dark:border-slate-700">
+                                    <img src="https://ui-avatars.com/api/?name=Giang+Vien&background=3b82f6&color=fff" alt="Avatar" className="w-8 h-8 rounded-full" />
+                                    <div className="text-sm">
+                                        <div className="font-semibold text-slate-800 dark:text-white">Giảng viên</div>
+                                        <div className="text-slate-500 text-xs">Khoa Cơ khí</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="p-8 pb-20 print:p-0">
+                            {activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : <GeneratorScreen />}
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
