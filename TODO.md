@@ -1,50 +1,42 @@
-# TODO - Phát triển Cơ sở dữ liệu SQL cho bảng tra ISO 286
+# TODO - Nâng cấp Loading State (MouseLoadingOverlay) + Login & Phân quyền (RBAC)
 
-## Kiến trúc mục tiêu (Layered Architecture + Database Layer)
-```
-d:/iso-286-edtech/
-├── main.py                          # Entry point (uvicorn main:app --reload) + lifespan seed DB
-├── index.html                       # Frontend: tải bảng ISO 286 từ API (giữ fallback nhúng)
-├── requirements.txt                 # Thêm sqlalchemy, pymysql, psycopg2-binary
-├── schema.sql                       # DDL chuẩn MySQL/PostgreSQL cho bảng tra ISO 286
-└── app/
-    ├── core/
-    │   ├── config.py                # + DATABASE_URL (mặc định SQLite, đổi biến môi trường -> MySQL/PostgreSQL)
-    │   ├── utils.py                 # esc(), fmt_signed()
-    │   └── pdf_fonts.py             # Đăng ký font TNR + styles PDF
-    ├── db/                          # ⭐ TẦNG CƠ SỞ DỮ LIỆU MỚI
-    │   ├── database.py              # engine + session (SQLAlchemy)
-    │   ├── models.py                # ORM: IsoSizeRange, IsoItGrade, IsoDeviation, IsoFitLibrary
-    │   ├── seed.py                  # Số hóa toàn bộ bảng tra ISO 286 (IT01-IT18, trục/lỗ a-zc/A-ZC)
-    │   └── repository.py            # Data Access Layer (tra IT, sai lệch, khoảng kích thước)
-    ├── models/
-    │   └── schemas.py               # Pydantic models (không đổi)
-    ├── services/
-    │   ├── tolerance_service.py     # ⭐ ĐỌC DỮ LIỆU TỪ CSDL (repository), công thức làm fallback
-    │   ├── docx_service.py          # Không đổi
-    │   ├── pdf_service.py           # Không đổi
-    │   └── export_service.py        # Không đổi
-    └── api/
-        └── routes/
-            ├── export.py            # Không đổi
-            └── iso.py               # ⭐ MỚI: GET /api/iso/tables trả bảng ISO 286 từ CSDL
-```
+## A. Nâng cấp Loading State - Con chuột chạy trên vòng quay (MouseLoadingOverlay)
 
-## Các bước thực hiện
-- [x] 0. Phân tích task & duyệt kế hoạch với người dùng
-- [x] 1. Thêm thư viện SQL vào `requirements.txt` (sqlalchemy, pymysql, psycopg2-binary)
-- [x] 2. Tạo `app/db/database.py` - engine + session (SQLite mặc định, hỗ trợ MySQL/PostgreSQL)
-- [x] 3. Tạo `app/db/models.py` - ORM models: iso_size_ranges, iso_it_grades, iso_deviations (+ iso_fit_library)
-- [x] 4. Tạo `app/db/seed.py` - số hóa toàn bộ bảng tra ISO 286 (IT01→IT18, sai lệch trục/lỗ a→zc, A→ZC)
-- [x] 5. Tạo `app/db/repository.py` - Data Access Layer (tra cứu IT, sai lệch, khoảng kích thước)
-- [x] 6. Cập nhật `app/core/config.py` - thêm `DATABASE_URL`
-- [x] 7. Tái cấu trúc `app/services/tolerance_service.py` - truy vấn CSDL là nguồn chính, công thức làm fallback
-- [x] 8. Tạo `schema.sql` - DDL chuẩn cho MySQL/PostgreSQL
-- [x] 9. Tạo `app/api/routes/iso.py` - endpoint GET /api/iso/tables
-- [x] 10. Cập nhật `main.py` - lifespan tự tạo bảng + seed, gắn router iso
-- [x] 11. Cập nhật `index.html` - tải bảng ISO 286 từ API `GET /api/iso/tables`, giữ dữ liệu nhúng làm fallback
-- [x] 12. Kiểm thử: cài dependencies, seed DB, chạy uvicorn, gọi API `/api/iso/tables`, kiểm tra tính toán vẫn đúng
-  - [x] Smoke test DB: tạo bảng + seed 260 IT + 663 sai lệch + 12 fit (PASSED)
-  - [x] Smoke test động cơ: ϕ40 H7/g6, ϕ100 H7/k6, ϕ50 H7/p6 khớp bảng chuẩn (PASSED)
-  - [x] API test: GET /api/iso/tables, POST /api/export/docx, POST /api/export/pdf (PASSED)
+- [x] 1. Thêm keyframes `wheelSpin` & `loadingBar` vào `tailwind.config` (animation mới)
+- [x] 2. Tạo component `<MouseLoadingOverlay/>` trong `index.html`:
+  - [x] 2a. Toàn màn hình `fixed inset-0 z-50`, nền `bg-slate-900/60 backdrop-blur-sm`
+  - [x] 2b. Ảnh GIF con chuột/hamster chạy (danh sách `MOUSE_GIF_SOURCES`, tự fallback link kế tiếp)
+  - [x] 2c. Fallback vòng quay hamster thuần CSS 🐹 khi mọi link GIF bị chặn
+  - [x] 2d. Dòng thông báo `animate-pulse` + thanh tiến trình chạy (`animate-loadingBar`)
+- [x] 3. Tích hợp vào `<GeneratorScreen/>`:
+  - [x] 3a. Render overlay khi `isGenerating` (title: "Đang thiết kế bộ đề thi...")
+  - [x] 3b. Render overlay khi `isExportingDocx` (title: "Đang đóng gói file Word...")
+  - [x] 3c. Render overlay khi `isExportingPdf` (title: "Đang kết xuất file PDF...")
+- [x] 4. Kéo dài `setTimeout` trong `handleGenerate` từ `400ms` → `2500ms` để thấy rõ hoạt ảnh
+- [ ] 5. (Tùy chọn) Thay link GIF ưng ý trong mảng `MOUSE_GIF_SOURCES` nếu muốn
+
+## B. Tích hợp Login & Phân quyền (RBAC) vào Hệ thống ISO 286 EdTech
+
+### Các bước triển khai
+
+- [x] 1. Cập nhật `requirements.txt`: thêm `pyjwt`, `passlib[bcrypt]`, `bcrypt`, `python-multipart`
+- [x] 2. Viết lại `main.py`:
+  - [x] 2a. Cấu hình JWT (SECRET_KEY, thuật toán HS256, thời hạn token)
+  - [x] 2b. Mock Database `USERS` (giangvien/123/lecturer, sinhvien/123/student) với bcrypt
+  - [x] 2c. Endpoint `POST /api/login` trả về JWT token + thông tin user
+  - [x] 2d. Dependency `get_current_user` và `require_lecturer`
+  - [x] 2e. Bảo vệ router: `/api/iso/*` cần đăng nhập, `/api/export/*` cần lecturer
+- [x] 3. Cập nhật `index.html`:
+  - [x] 3a. State `currentUser`, `token`; lưu/khôi phục từ `localStorage`
+  - [x] 3b. Component `<LoginScreen/>` form đăng nhập Tailwind đẹp mắt
+  - [x] 3c. Chưa đăng nhập -> hiển thị LoginScreen
+  - [x] 3d. Sidebar: ẩn "Tạo Đề Tự Động" nếu role = student
+  - [x] 3e. Header: hiển thị tên/role user + nút "Đăng xuất"
+  - [x] 3f. `loadIsoDbFromApi` & `handleExportServer` gửi `Authorization: Bearer <token>`
+- [x] 4. Kiểm thử:
+  - [x] 4a. Cài dependencies: `pip install -r requirements.txt`
+  - [x] 4b. Chạy server: `uvicorn main:app --reload`
+  - [x] 4c. Test đăng nhập `giangvien` (có tab Tạo Đề) và `sinhvien` (không có tab Tạo Đề)
+
+
 
