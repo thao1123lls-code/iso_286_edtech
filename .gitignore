@@ -18,10 +18,11 @@ ENV/
 *.sqlite
 *.sqlite3
 
-# Test files
+# Test files & artifacts
 _smoke_test.py
 _api_test.py
-_fix_header.py
+_verify_header.py
+_header_sample.docx
 
 # IDE
 .vscode/
