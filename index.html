@@ -268,6 +268,24 @@
             }
         };
 
+// -------------------------------------------------------------------
+        // MOCK_USERS - Bộ dữ liệu mẫu cho màn hình Login (quick-fill)
+        //   - 2 Giảng viên (role: 'teacher')
+        //   - 5 Sinh viên  (role: 'student', có mssv + className)
+        // Username phải trùng với backend USERS (main.py) để đăng nhập thật.
+        // -------------------------------------------------------------------
+        const MOCK_USERS = [
+            // ---- 2 GIẢNG VIÊN ----
+            { username: "gv01", password: "123", full_name: "TS. Nguyễn Văn Giảng", role: "teacher", department: "Khoa Cơ khí · Bộ môn Kỹ thuật Cơ khí" },
+            { username: "gv02", password: "123", full_name: "ThS. Trần Thị Dạy", role: "teacher", department: "Khoa Cơ khí · Bộ môn Cơ khí Chế tạo" },
+            // ---- 5 SINH VIÊN (có mssv + className) ----
+            { username: "2110481", password: "123", full_name: "Nguyễn Văn An", role: "student", mssv: "2110481", className: "21CK1" },
+            { username: "2110482", password: "123", full_name: "Trần Thị Bình", role: "student", mssv: "2110482", className: "21CK1" },
+            { username: "2110483", password: "123", full_name: "Lê Văn Cường", role: "student", mssv: "2110483", className: "21CK2" },
+            { username: "2110484", password: "123", full_name: "Phạm Thị Dung", role: "student", mssv: "2110484", className: "21CK2" },
+            { username: "2110485", password: "123", full_name: "Vũ Văn Em", role: "student", mssv: "2110485", className: "21CK3" }
+        ];
+
         // ---------- AUTH HELPERS (dùng chung cho toàn bộ ứng dụng) ----------
         // Token JWT lưu ở module-level; App sẽ đồng bộ khi đăng nhập / đăng xuất.
         let AUTH_TOKEN = localStorage.getItem('iso286_token') || null;
@@ -301,6 +319,38 @@
             }
         }
 
+        // -------------------------------------------------------------------
+        // LƯU TRỮ LỊCH SỬ ĐỀ THI (POST /api/history)
+        // Sau khi tạo đề xong, gọi API đẩy toàn bộ lô đề xuống Backend
+        // để lưu vào bảng generated_questions (SQLite) qua bulk insert.
+        // -------------------------------------------------------------------
+        async function saveHistoryToBackend(examData) {
+            if (!examData || !examData.stats || !examData.questions || !examData.questions.length) {
+                return null;
+            }
+            const activeTasks = examData.activeTasks || [];
+            const payload = {
+                batch_code: examData.stats.batchCode,
+                questions: examData.questions.map(q => ({
+                    student_mssv: (q.student && q.student.mssv) || '',
+                    student_name: (q.student && q.student.name) || 'Sinh viên',
+                    // exam_data chứa toàn bộ chi tiết D, Miền Lỗ, Miền Trục + Rubric
+                    // để có thể "Xem lại" / "Xuất Word/PDF" lại sau này.
+                    exam_data: { ...q, activeTasks }
+                }))
+            };
+            const res = await fetch('http://127.0.0.1:8000/api/history', {
+                method: 'POST',
+                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify(payload)
+            });
+            if (res.status === 401 || res.status === 403) {
+                throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền lưu lịch sử.');
+            }
+            if (!res.ok) throw new Error(`Lỗi máy chủ: HTTP ${res.status}`);
+            return res.json();
+        }
+
         class DualEngineMath {
             static getRangeIndex(D) {
                 return ISO_DB.sizeRanges.findIndex(r => D > r.min && D <= r.max);
@@ -313,6 +363,16 @@
                 return Math.round(i * (multipliers[grade] || 10));
             }
 
+            // =====================================================================
+            // FIXED-POINT NANOMETER ARCHITECTURE
+            // Toàn bộ tính toán lõi dùng SỐ NGUYÊN NANOMET (nm) để triệt tiêu 100%
+            // sai số dấu phẩy động. Chỉ đổi đơn vị ở bước hậu xử lý khi return.
+            // ---------------------------------------------------------------------
+            // Quy tắc 1 (Tiền xử lý): D (mm) -> nm ; IT / fundDev (µm) -> nm
+            // Quy tắc 2 (Integer Math): ES,EI,es,ei / Dmax..dmin / S,N / TN
+            //                            đều tính 100% bằng số nguyên nm.
+            // Quy tắc 3 (Hậu xử lý):    return ra UI mới chia 1000 (µm) / 1e6 (mm).
+            // =====================================================================
             static calculate(D, holeClass, shaftClass) {
                 D = parseFloat(D);
                 if (isNaN(D) || D <= 0 || D > 3150) return { error: "Kích thước D phải từ 0 - 3150mm" };
@@ -330,79 +390,110 @@
 
                 if (!hole || !shaft) return { error: "Định dạng miền dung sai chưa đúng (VD: H7, g6)" };
 
+                // ==============================================================
+                // QUY TẮC 1: TIỀN XỬ LÝ — Quy đổi mọi giá trị sang Nanomet (nguyên)
+                // ==============================================================
+                const MM_TO_NM = 1000000;   // 1 mm = 1.000.000 nm
+                const UM_TO_NM = 1000;      // 1 µm = 1.000 nm
+                const D_nm = Math.round(D * MM_TO_NM); // Kích thước danh nghĩa [nm]
+
                 const idx = this.getRangeIndex(D);
-                let IT_hole, IT_shaft, ES, EI, es, ei;
+                let IT_hole_um, IT_shaft_um;
 
                 // 1. PRIMARY ENGINE: Tra bảng CSDL
                 if (idx !== -1 && ISO_DB.itGrades[hole.it] && ISO_DB.itGrades[shaft.it]) {
-                    IT_hole = ISO_DB.itGrades[hole.it][idx];
-                    IT_shaft = ISO_DB.itGrades[shaft.it][idx];
+                    IT_hole_um = ISO_DB.itGrades[hole.it][idx];
+                    IT_shaft_um = ISO_DB.itGrades[shaft.it][idx];
                 } else {
                     // 2. SECONDARY FALLBACK ENGINE
-                    IT_hole = this.fallbackCalculateIT(D, hole.it);
-                    IT_shaft = this.fallbackCalculateIT(D, shaft.it);
+                    IT_hole_um = this.fallbackCalculateIT(D, hole.it);
+                    IT_shaft_um = this.fallbackCalculateIT(D, shaft.it);
                 }
 
-                // Tính toán sai lệch cho Trục
+                // Dung sai IT: µm -> nm (số nguyên)
+                const IT_hole_nm = Math.round(IT_hole_um * UM_TO_NM);
+                const IT_shaft_nm = Math.round(IT_shaft_um * UM_TO_NM);
+
+                // ==============================================================
+                // QUY TẮC 2: TOÀN BỘ PHÉP TÍNH BẰNG SỐ NGUYÊN NANOMET
+                // ==============================================================
                 const sSym = shaft.sym.toLowerCase();
                 const upperDevLetters = ['a','b','c','cd','d','e','ef','f','fg','g','h'];
-                
+
+                let ES_nm, EI_nm, es_nm, ei_nm;
+
+                // --- Sai lệch Trục (Shaft) ---
                 if (idx !== -1 && ISO_DB.shaftDeviations[sSym]) {
-                    let fundDev = ISO_DB.shaftDeviations[sSym][idx];
+                    // fundDev từ bảng ISO_DB đang ở µm -> bắt buộc chuyển sang nm (nguyên)
+                    const fundDev_nm = Math.round(ISO_DB.shaftDeviations[sSym][idx] * UM_TO_NM);
                     if (upperDevLetters.includes(sSym)) {
-                        es = fundDev;
-                        ei = es - IT_shaft;
+                        es_nm = fundDev_nm;
+                        ei_nm = es_nm - IT_shaft_nm;
                     } else if (sSym === 'js') {
-                        es = Math.round(IT_shaft / 2);
-                        ei = -Math.round(IT_shaft / 2);
-                    } else { 
-                        ei = fundDev; // k, m, n, p, r, s, t, u, v, z...
-                        es = ei + IT_shaft;
+                        // Miền đối xứng ±IT/2 — ép nm thành bội số đúng của 1000
+                        // để hậu xử lý chia 1000 luôn trả về số nguyên µm chính xác:
+                        // round(IT_nm/2000)*1000 == round(IT_um/2)*1000 (nm).
+                        es_nm = Math.round(IT_shaft_nm / 2000) * 1000;
+                        ei_nm = -es_nm;
+                    } else {
+                        ei_nm = fundDev_nm; // k, m, n, p, r, s, t, u, v, z...
+                        es_nm = ei_nm + IT_shaft_nm;
                     }
                 } else {
-                    // Math formula estimation for unlisted shaft classes
+                    // Fallback math formula — sinh ra nm nguyên (chia 2 bọc Math.round)
                     if (sSym === 'js') {
-                        es = Math.round(IT_shaft / 2);
-                        ei = -es;
+                        // Miền đối xứng: giữ nm là bội số đúng của 1000 (tránh double-round)
+                        es_nm = Math.round(IT_shaft_nm / 2000) * 1000;
+                        ei_nm = -es_nm;
                     } else if (sSym < 'h') {
-                        es = -Math.round(5.5 * Math.pow(D, 0.41));
-                        ei = es - IT_shaft;
+                        const es_um = -Math.round(5.5 * Math.pow(D, 0.41)); // ước lượng [µm]
+                        es_nm = Math.round(es_um * UM_TO_NM);               // -> [nm]
+                        ei_nm = es_nm - IT_shaft_nm;
                     } else {
-                        ei = Math.round(5 * Math.pow(D, 0.34));
-                        es = ei + IT_shaft;
+                        const ei_um = Math.round(5 * Math.pow(D, 0.34));    // ước lượng [µm]
+                        ei_nm = Math.round(ei_um * UM_TO_NM);               // -> [nm]
+                        es_nm = ei_nm + IT_shaft_nm;
                     }
                 }
 
-                // Tính toán sai lệch cho Lỗ (Hole)
+                // --- Sai lệch Lỗ (Hole) ---
                 const hSym = hole.sym.toUpperCase();
                 if (hSym === 'H') {
-                    EI = 0;
-                    ES = EI + IT_hole;
+                    EI_nm = 0;
+                    ES_nm = EI_nm + IT_hole_nm;
                 } else if (hSym === 'JS') {
-                    ES = Math.round(IT_hole / 2);
-                    EI = -Math.round(IT_hole / 2);
+                    // Miền đối xứng ±IT/2 — nm là bội số đúng của 1000 (tránh double-round)
+                    ES_nm = Math.round(IT_hole_nm / 2000) * 1000;
+                    EI_nm = -ES_nm;
                 } else if (hSym < 'H') {
-                    // Lỗ hở A-G (Trái dấu với Trục a-g)
-                    EI = -es; // Quy tắc đảo dấu
-                    ES = EI + IT_hole;
+                    // Lỗ hở A-G (Quy tắc đảo dấu với Trục a-g)
+                    EI_nm = -es_nm;
+                    ES_nm = EI_nm + IT_hole_nm;
                 } else {
                     // Lỗ chặt K-ZC
-                    ES = -ei; 
-                    EI = ES - IT_hole;
+                    ES_nm = -ei_nm;
+                    EI_nm = ES_nm - IT_hole_nm;
                 }
 
-                // Xác định đặc tính lắp ghép (Fit Characteristics)
-                let Smax = ES - ei;
-                let Smin = EI - es;
-                let Nmax = es - EI;
-                let Nmin = ei - ES;
-                
+                // --- Kích thước giới hạn (100% số nguyên Nanomet) ---
+                const Dmax_nm = D_nm + ES_nm;   // Lỗ lớn nhất [nm]
+                const Dmin_nm = D_nm + EI_nm;   // Lỗ nhỏ nhất [nm]
+                const dmax_nm = D_nm + es_nm;   // Trục lớn nhất [nm]
+                const dmin_nm = D_nm + ei_nm;   // Trục nhỏ nhất [nm]
+
+                // --- Đặc tính lắp ghép (100% số nguyên Nanomet) ---
+                const Smax_nm = ES_nm - ei_nm;   // Độ hở lớn nhất [nm]
+                const Smin_nm = EI_nm - es_nm;   // Độ hở nhỏ nhất [nm]
+                const Nmax_nm = es_nm - EI_nm;   // Độ dôi lớn nhất [nm]
+                const Nmin_nm = ei_nm - ES_nm;   // Độ dôi nhỏ nhất [nm]
+                const TN_nm = IT_hole_nm + IT_shaft_nm; // Dung sai lắp ghép [nm]
+
                 let fitType, fitClass, colorTheme;
-                if (Smin >= 0) {
+                if (Smin_nm >= 0) {
                     fitType = "Lắp lỏng (Có độ hở)";
                     fitClass = "clearance";
                     colorTheme = "emerald";
-                } else if (Nmin >= 0) {
+                } else if (Nmin_nm >= 0) {
                     fitType = "Lắp chặt (Có độ dôi)";
                     fitClass = "interference";
                     colorTheme = "rose";
@@ -412,11 +503,37 @@
                     colorTheme = "amber";
                 }
 
+                // ==============================================================
+                // QUY TẮC 3: HẬU XỬ LÝ — Chỉ đổi đơn vị ngay tại RETURN cho UI
+                // Sai lệch/độ hở/độ dôi -> µm (chia 1000) | Kích thước -> mm (chia 1e6)
+                // CẤU TRÚC RETURN OBJECT GIỮ NGUYÊN (không đổi shape -> UI không hỏng)
+                // ==============================================================
                 return {
                     D,
-                    hole: { sym: hSym, it: hole.it, ES, EI, T: IT_hole, Dmax: D + ES/1000, Dmin: D + EI/1000 },
-                    shaft: { sym: sSym, it: shaft.it, es, ei, T: IT_shaft, dmax: D + es/1000, dmin: D + ei/1000 },
-                    fit: { type: fitType, class: fitClass, colorTheme, Smax, Smin, Nmax, Nmin, TN: IT_hole + IT_shaft }
+                    hole: {
+                        sym: hSym, it: hole.it,
+                        ES: Math.round(ES_nm / 1000),
+                        EI: Math.round(EI_nm / 1000),
+                        T: IT_hole_um,
+                        Dmax: Dmax_nm / MM_TO_NM,
+                        Dmin: Dmin_nm / MM_TO_NM
+                    },
+                    shaft: {
+                        sym: sSym, it: shaft.it,
+                        es: Math.round(es_nm / 1000),
+                        ei: Math.round(ei_nm / 1000),
+                        T: IT_shaft_um,
+                        dmax: dmax_nm / MM_TO_NM,
+                        dmin: dmin_nm / MM_TO_NM
+                    },
+                    fit: {
+                        type: fitType, class: fitClass, colorTheme,
+                        Smax: Math.round(Smax_nm / 1000),
+                        Smin: Math.round(Smin_nm / 1000),
+                        Nmax: Math.round(Nmax_nm / 1000),
+                        Nmin: Math.round(Nmin_nm / 1000),
+                        TN: IT_hole_um + IT_shaft_um
+                    }
                 };
             }
         }
@@ -1150,11 +1267,11 @@
             const [mixRatio, setMixRatio] = useState({ easy: 30, medium: 40, hard: 30 });
             
             const [studentListText, setStudentListText] = useState(
-                "2021001\tNguyễn Văn A\t21CK1\tME2026\n" +
-                "2021002\tTrần Thị B\t21CK1\tME2026\n" +
-                "2021003\tLê Hoàng C\t21CK2\tME2026\n" +
-                "2021004\tPhạm Minh D\t21CK2\tME2026\n" +
-                "2021005\tVũ Đức E\t21CK3\tME2026"
+                "2110481\tNguyễn Văn An\t21CK1\tME2026\n" +
+                "2110482\tTrần Thị Bình\t21CK1\tME2026\n" +
+                "2110483\tLê Văn Cường\t21CK2\tME2026\n" +
+                "2110484\tPhạm Thị Dung\t21CK2\tME2026\n" +
+                "2110485\tVũ Văn Em\t21CK3\tME2026"
             );
 
             const [selectedTaskIds, setSelectedTaskIds] = useState(
@@ -1281,8 +1398,21 @@
                         normalizedRubricTasks[0].points = Math.round((normalizedRubricTasks[0].points + diff) * 10) / 10;
                     }
 
-                    setExamData({ questions, stats, activeTasks: normalizedRubricTasks });
+                    const examPayload = { questions, stats, activeTasks: normalizedRubricTasks };
+                    setExamData(examPayload);
                     setIsGenerating(false);
+
+                    // Lưu lô đề thi vừa tạo vào Cơ sở dữ liệu (SQLite qua POST /api/history).
+                    saveHistoryToBackend(examPayload)
+                        .then(saved => {
+                            if (saved) {
+                                console.info('[History] Đã lưu lô đề vào CSDL:', saved.batch_code, `(${saved.count} bài)`);
+                            }
+                        })
+                        .catch(err => {
+                            console.warn('[History] Không lưu được lịch sử đề thi:', err.message);
+                            // Không chặn luồng chính – đề vẫn được tạo & hiển thị trên trình duyệt.
+                        });
                 }, 2500); // Kéo dài ~2.5 giây để hiển thị rõ hoạt ảnh MouseLoadingOverlay
             };
 
@@ -1678,6 +1808,356 @@
             );
         };
 
+// ===================================================================
+        // HISTORY SCREEN - Màn hình Lịch sử Đề thi (lưu trữ trong CSDL)
+        // ===================================================================
+        const HistoryScreen = ({ currentUser }) => {
+            const [batches, setBatches] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+            const [viewingExam, setViewingExam] = useState(null); // lô đề đang xem lại
+            const [exportingDocx, setExportingDocx] = useState(false);
+            const [exportingPdf, setExportingPdf] = useState(false);
+
+            const isStudent = currentUser && currentUser.role === 'student';
+
+            const loadHistory = async () => {
+                setLoading(true);
+                setError('');
+                try {
+                    const res = await fetch('http://127.0.0.1:8000/api/history', {
+                        headers: getAuthHeaders()
+                    });
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền truy cập.');
+                    }
+                    if (!res.ok) throw new Error(`Lỗi máy chủ: HTTP ${res.status}`);
+                    const data = await res.json();
+                    setBatches(Array.isArray(data) ? data : []);
+                } catch (err) {
+                    console.error('[History] Lỗi tải lịch sử:', err);
+                    setError(err.message || 'Không thể tải lịch sử đề thi. Vui lòng đảm bảo Backend đang chạy (uvicorn main:app --reload).');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Gọi API khi component được mount.
+            useEffect(() => {
+                loadHistory();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
+
+            const formatDate = (val) => {
+                if (!val) return '—';
+                const d = new Date(val);
+                if (isNaN(d.getTime())) return val;
+                return d.toLocaleString('vi-VN', {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit'
+                });
+            };
+
+            // Tái dựng ExamData (đúng shape mà backend /api/export/* và màn hình cần)
+            // để bấm "Xem lại" hoặc "Xuất Word/PDF" lại cho lô đề cũ.
+            const buildExamDataFromBatch = (batch) => {
+                const questions = (batch.questions || []).map(item => {
+                    // exam_data đã lưu toàn bộ câu hỏi (gồm cả student, activeTasks).
+                    const ed = item.exam_data || {};
+                    return {
+                        ...ed,
+                        student: {
+                            mssv: item.student_mssv || (ed.student && ed.student.mssv) || '',
+                            name: item.student_name || (ed.student && ed.student.name) || 'Sinh viên',
+                            className: (ed.student && ed.student.className) || 'Lớp Kỹ Thuật',
+                            classCode: (ed.student && ed.student.classCode) || 'ISO-2026'
+                        },
+                        examCode: ed.examCode || `${batch.batch_code}-${item.student_mssv || ''}`
+                    };
+                });
+                const activeTasks = (questions[0] && questions[0].activeTasks) || [];
+                return {
+                    stats: {
+                        batchCode: batch.batch_code,
+                        total: questions.length,
+                        clearance: questions.filter(q => q.fit && q.fit.class === 'clearance').length,
+                        transition: questions.filter(q => q.fit && q.fit.class === 'transition').length,
+                        interference: questions.filter(q => q.fit && q.fit.class === 'interference').length
+                    },
+                    questions,
+                    activeTasks
+                };
+            };
+
+            const handleView = (batch) => {
+                setViewingExam(buildExamDataFromBatch(batch));
+            };
+
+            const handleExport = async (batch, format) => {
+                if (isStudent) {
+                    alert('Chỉ Giảng viên (lecturer) mới được xuất file Word/PDF.');
+                    return;
+                }
+                const setLoader = format === 'docx' ? setExportingDocx : setExportingPdf;
+                setLoader(true);
+                try {
+                    const examData = buildExamDataFromBatch(batch);
+                    const response = await fetch(`http://127.0.0.1:8000/api/export/${format}`, {
+                        method: 'POST',
+                        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify(examData)
+                    });
+                    if (response.status === 401 || response.status === 403) {
+                        throw new Error(response.status === 401
+                            ? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'
+                            : 'Chỉ Giảng viên (lecturer) mới được xuất file Word/PDF.');
+                    }
+                    if (!response.ok) throw new Error(`Lỗi kết nối Server: ${response.statusText}`);
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `De_Thi_ISO286_${batch.batch_code}.${format}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                } catch (err) {
+                    alert(`Giao tiếp Backend thất bại: ${err.message}\n\nVui lòng đảm bảo Backend đang chạy (uvicorn main:app --reload).`);
+                    console.error(err);
+                } finally {
+                    setLoader(false);
+                }
+            };
+
+            return (
+                <div className="space-y-8 animate-fadeInUp">
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center shadow-primary-glow">
+                                    <Icon name="clock-rotate-left" />
+                                </div>
+                                <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Lịch Sử Đề Thi</h2>
+                            </div>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 ml-14">Các lô đề thi đã tạo được lưu trữ trong Cơ sở dữ liệu, có thể xem lại & xuất file.</p>
+                        </div>
+                        <button
+                            onClick={loadHistory}
+                            disabled={loading}
+                            className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm disabled:opacity-60">
+                            <Icon name="rotate" className={loading ? 'fa-spin' : ''} /> Làm mới
+                        </button>
+                    </div>
+
+                    {loading && (
+                        <Card className="p-10 text-center text-slate-500 dark:text-slate-400">
+                            <Icon name="spinner" className="fa-spin text-3xl text-primary-500 mb-3" />
+                            <div>Đang tải lịch sử đề thi...</div>
+                        </Card>
+                    )}
+
+                    {error && !loading && (
+                        <div className="bg-rose-50 border border-rose-300 border-l-4 border-l-rose-500 text-rose-700 px-5 py-4 rounded-xl shadow-sm flex items-start gap-3" role="alert">
+                            <Icon name="circle-exclamation" className="mt-0.5 text-rose-500" />
+                            <div>
+                                <strong className="font-bold block mb-0.5">Không tải được lịch sử!</strong>
+                                <span className="block sm:inline">{error}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {!loading && !error && batches.length === 0 && (
+                        <Card className="p-12 text-center">
+                            <div className="w-20 h-20 mx-auto rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-4xl text-slate-400 mb-4">
+                                <Icon name="folder-open" />
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-700 dark:text-slate-200 mb-1">Chưa có lô đề thi nào</h3>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Hãy vào mục "Tạo Đề Tự Động" để tạo bộ đề mới, hệ thống sẽ tự động lưu vào lịch sử.</p>
+                        </Card>
+                    )}
+
+                    {!loading && !error && batches.length > 0 && (
+                        <div className="flex flex-col gap-4">
+                            {batches.map((batch) => (
+                                <Card key={batch.batch_code} className="p-5 lg:p-6">
+                                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-xl shadow-primary-glow shrink-0">
+                                                <Icon name="clock-rotate-left" />
+                                            </div>
+                                            <div>
+                                                <div className="font-mono font-bold text-lg text-slate-900 dark:text-white">{batch.batch_code}</div>
+                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2">
+                                                    <Icon name="calendar-days" className="text-slate-400" /> {formatDate(batch.created_at)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            <div className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-semibold flex items-center gap-2">
+                                                <Icon name="file-lines" className="text-primary-500" /> {batch.count} bài thi
+                                            </div>
+                                            <button
+                                                onClick={() => handleView(batch)}
+                                                className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm">
+                                                <Icon name="eye" /> Xem lại
+                                            </button>
+                                            {!isStudent && (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleExport(batch, 'docx')}
+                                                        disabled={exportingDocx}
+                                                        className="bg-[#2b579a] hover:bg-[#1e3f72] disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-soft hover:scale-[1.03] active:scale-95 text-sm">
+                                                        <Icon name="file-word" /> {exportingDocx ? 'Đang xuất...' : 'Word'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleExport(batch, 'pdf')}
+                                                        disabled={exportingPdf}
+                                                        className="bg-[#df2a2a] hover:bg-[#b52222] disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-soft hover:scale-[1.03] active:scale-95 text-sm">
+                                                        <Icon name="file-pdf" /> {exportingPdf ? 'Đang xuất...' : 'PDF'}
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Detail: danh sách sinh viên + mối ghép trong lô */}
+                                    <details className="mt-4 border-t border-slate-100 dark:border-slate-800 pt-4 group">
+                                        <summary className="cursor-pointer text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 flex items-center gap-2">
+                                            <Icon name="chevron-down" className="transition-transform group-open:rotate-180 text-slate-400" />
+                                            Chi tiết {batch.count} bài thi trong lô
+                                        </summary>
+                                        <div className="mt-3 overflow-x-auto">
+                                            <table className="w-full text-xs font-mono text-left border-collapse">
+                                                <thead>
+                                                    <tr className="bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300">
+                                                        <th className="border border-slate-200 dark:border-slate-700 p-2">MSSV</th>
+                                                        <th className="border border-slate-200 dark:border-slate-700 p-2">Họ tên</th>
+                                                        <th className="border border-slate-200 dark:border-slate-700 p-2">Mối ghép</th>
+                                                        <th className="border border-slate-200 dark:border-slate-700 p-2">Đặc tính</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {(batch.questions || []).map((item, idx) => {
+                                                        const ed = item.exam_data || {};
+                                                        const fitType = (ed.fit && ed.fit.type) || '—';
+                                                        return (
+                                                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                                                <td className="border border-slate-200 dark:border-slate-700 p-2 font-bold">{item.student_mssv}</td>
+                                                                <td className="border border-slate-200 dark:border-slate-700 p-2">{item.student_name}</td>
+                                                                <td className="border border-slate-200 dark:border-slate-700 p-2 text-primary-600 dark:text-primary-400 font-bold">
+                                                                    {ed.D ? `ϕ${ed.D} ${ed.hole && ed.hole.sym}${ed.hole && ed.hole.it}/${ed.shaft && ed.shaft.sym}${ed.shaft && ed.shaft.it}` : '—'}
+                                                                </td>
+                                                                <td className="border border-slate-200 dark:border-slate-700 p-2">{fitType}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </details>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Modal "Xem lại" - hiển thị bộ đề đã lưu */}
+                    {viewingExam && (
+                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4 lg:p-8" onClick={() => setViewingExam(null)}>
+                            <div className="w-full max-w-4xl bg-white dark:bg-slate-800 rounded-2xl shadow-2xl my-4" onClick={e => e.stopPropagation()}>
+                                <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4 lg:p-5 flex justify-between items-center rounded-t-2xl z-10 no-print">
+                                    <div>
+                                        <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
+                                            <Icon name="clock-rotate-left" className="text-primary-500" /> Xem lại lô đề
+                                        </h3>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                                            {viewingExam.stats.batchCode} · {viewingExam.questions.length} bài · {viewingExam.activeTasks.length} yêu cầu/đề
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {!isStudent && (
+                                            <>
+                                                <button onClick={() => handleExport({ batch_code: viewingExam.stats.batchCode, questions: viewingExam.questions.map(q => ({ exam_data: q })) }, 'docx')} disabled={exportingDocx} className="bg-[#2b579a] hover:bg-[#1e3f72] disabled:opacity-60 text-white px-3 py-2 rounded-lg font-semibold transition-all duration-300 flex items-center gap-1.5 text-xs">
+                                                    <Icon name="file-word" /> Word
+                                                </button>
+                                                <button onClick={() => handleExport({ batch_code: viewingExam.stats.batchCode, questions: viewingExam.questions.map(q => ({ exam_data: q })) }, 'pdf')} disabled={exportingPdf} className="bg-[#df2a2a] hover:bg-[#b52222] disabled:opacity-60 text-white px-3 py-2 rounded-lg font-semibold transition-all duration-300 flex items-center gap-1.5 text-xs">
+                                                    <Icon name="file-pdf" /> PDF
+                                                </button>
+                                            </>
+                                        )}
+                                        <button onClick={() => setViewingExam(null)} className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all duration-300">
+                                            <Icon name="xmark" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 lg:p-6 bg-white text-black overflow-y-auto max-h-[80vh]">
+                                    {viewingExam.questions.map((q, idx) => (
+                                        <div key={idx} className={`mb-8 pb-8 border-b-2 border-slate-200 ${idx > 0 ? 'print-break' : ''}`}>
+                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4 flex justify-between items-center">
+                                                <div>
+                                                    <div className="text-xs uppercase tracking-wider font-bold text-slate-500">Đề Thi Cá Nhân Hóa</div>
+                                                    <h3 className="text-lg font-bold text-slate-900">Họ & Tên: <span className="text-primary-700">{q.student.name}</span></h3>
+                                                    <div className="text-sm text-slate-700 font-mono mt-1">
+                                                        MSSV: <strong>{q.student.mssv}</strong> · Lớp: <strong>{q.student.className}</strong> · Mức độ: <strong>{q.diffLabel}</strong>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="font-mono text-xs text-slate-500">Mã đề: #{idx + 1}</div>
+                                                </div>
+                                            </div>
+
+                                            <div className="mb-4">
+                                                <div className="text-lg font-bold">
+                                                    ĐỀ BÀI: ϕ{q.D} {q.hole.sym}{q.hole.it}/{q.shaft.sym}{q.shaft.it}
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-sm">
+                                                <div className="bg-white p-3 rounded border border-slate-200">
+                                                    <div className="font-bold border-b border-slate-200 pb-1 mb-2 text-primary-800">1. Lỗ ϕ{q.D} {q.hole.sym}{q.hole.it}</div>
+                                                    <div>ES = {q.hole.ES > 0 ? `+${q.hole.ES}` : q.hole.ES} μm</div>
+                                                    <div>EI = {q.hole.EI} μm</div>
+                                                    <div>Dmax = {q.hole.Dmax.toFixed(3)} mm</div>
+                                                    <div>Dmin = {q.hole.Dmin.toFixed(3)} mm</div>
+                                                    <div>TD = {q.hole.T} μm</div>
+                                                </div>
+                                                <div className="bg-white p-3 rounded border border-slate-200">
+                                                    <div className="font-bold border-b border-slate-200 pb-1 mb-2 text-amber-800">2. Trục ϕ{q.D} {q.shaft.sym}{q.shaft.it}</div>
+                                                    <div>es = {q.shaft.es > 0 ? `+${q.shaft.es}` : q.shaft.es} μm</div>
+                                                    <div>ei = {q.shaft.ei > 0 ? `+${q.shaft.ei}` : q.shaft.ei} μm</div>
+                                                    <div>dmax = {q.shaft.dmax.toFixed(3)} mm</div>
+                                                    <div>dmin = {q.shaft.dmin.toFixed(3)} mm</div>
+                                                    <div>Td = {q.shaft.T} μm</div>
+                                                </div>
+                                            </div>
+
+                                            <div className="mt-4 font-mono text-sm border p-3 rounded bg-white border-slate-200">
+                                                <div className="font-bold border-b border-slate-200 pb-1 mb-2 font-sans text-rose-700">3. Đặc tính lắp ghép: {q.fit.type.toUpperCase()}</div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>Smax = {q.fit.Smax} μm</div>
+                                                    <div>Smin = {q.fit.Smin} μm</div>
+                                                    <div>Nmax = {q.fit.Nmax} μm</div>
+                                                    <div>TS,N = {q.fit.TN} μm</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {(exportingDocx || exportingPdf) && (
+                        <MouseLoadingOverlay
+                            title={exportingDocx ? 'Đang đóng gói file Word...' : 'Đang kết xuất file PDF...'}
+                            message="Hệ thống đang xuất lại lô đề thi từ lịch sử, vui lòng chờ trong giây lát..."
+                        />
+                    )}
+                </div>
+            );
+        };
+
         // ===================================================================
         // LOGIN SCREEN - Màn hình đăng nhập (JWT + RBAC)
         // ===================================================================
@@ -1842,36 +2322,30 @@
                                     Tài khoản dùng thử (mật khẩu: 123)
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => quickFill('giangvien', '123')}
-                                        className="group px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-primary-400 hover:bg-primary-50/50 dark:hover:bg-primary-950/20 transition-all duration-300 text-left"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-xs shrink-0">
-                                                <Icon name="chalkboard-user" />
-                                            </div>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-800 dark:text-white">Giảng viên</div>
-                                                <div className="text-[10px] font-mono text-slate-500">giangvien · toàn quyền</div>
-                                            </div>
-                                        </div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => quickFill('sinhvien', '123')}
-                                        className="group px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 transition-all duration-300 text-left"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center text-xs shrink-0">
-                                                <Icon name="user-graduate" />
-                                            </div>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-800 dark:text-white">Sinh viên</div>
-                                                <div className="text-[10px] font-mono text-slate-500">sinhvien · học tập</div>
-                                            </div>
-                                        </div>
-                                    </button>
+                                    {MOCK_USERS.map((user, idx) => {
+                                        const isTeacher = user.role === 'teacher';
+                                        const subLabel = isTeacher
+                                            ? `${user.username} · Giảng viên`
+                                            : `${user.mssv} · ${user.className}`;
+                                        return (
+                                            <button
+                                                key={user.username}
+                                                type="button"
+                                                onClick={() => quickFill(user.username, user.password)}
+                                                className={`group px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 transition-all duration-300 text-left ${isTeacher ? 'hover:border-primary-400 hover:bg-primary-50/50 dark:hover:bg-primary-950/20' : 'hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20'}`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-7 h-7 rounded-lg bg-gradient-to-br text-white flex items-center justify-center text-xs shrink-0 ${isTeacher ? 'from-primary-500 to-indigo-600' : 'from-emerald-500 to-teal-600'}`}>
+                                                        <Icon name={isTeacher ? 'chalkboard-user' : 'user-graduate'} />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-bold text-slate-800 dark:text-white truncate">{user.full_name}</div>
+                                                        <div className="text-[10px] font-mono text-slate-500 truncate">{subLabel}</div>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                                 <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-3 text-center leading-relaxed">
                                     Sinh viên không nhìn thấy tab "Tạo Đề Tự Động"<br />
@@ -2003,6 +2477,11 @@
                                 <Icon name="file-circle-check" className="w-4 text-center" /> Tạo Đề Tự Động
                             </button>
                             )}
+                            <button 
+                                onClick={() => setActiveMenu('history')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'history' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
+                                <Icon name="clock-rotate-left" className="w-4 text-center" /> Lịch Sử Đề Thi
+                            </button>
                         </nav>
                         <div className="p-5 border-t border-slate-800/60 text-[11px] text-slate-500 leading-relaxed">
                             <div className="font-mono">v2.2 Standard Rubric</div>
@@ -2016,8 +2495,8 @@
                                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-sm lg:hidden">
                                     <Icon name="bars" />
                                 </div>
-                                <h1 className="text-lg lg:text-xl font-bold tracking-tight text-slate-800 dark:text-white">
-                                    {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
+<h1 className="text-lg lg:text-xl font-bold tracking-tight text-slate-800 dark:text-white">
+                                    {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : activeMenu === 'history' ? 'Lịch Sử Đề Thi Đã Tạo' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
                                 </h1>
                             </div>
                             <div className="flex items-center gap-4">
@@ -2052,7 +2531,7 @@
                         </header>
 
                         <div className="p-6 lg:p-10 pb-24 print:p-0">
-                            {activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : <GeneratorScreen />}
+                            {activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : activeMenu === 'history' ? <HistoryScreen currentUser={currentUser} /> : <GeneratorScreen />}
                         </div>
                     </main>
                 </div>

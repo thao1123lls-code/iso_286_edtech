@@ -22,6 +22,7 @@ ENV/
 _smoke_test.py
 _api_test.py
 _verify_header.py
+_history_test.py
 _header_sample.docx
 
 # IDE
