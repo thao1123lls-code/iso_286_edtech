@@ -132,16 +132,14 @@ def build_pdf_styles():
 
 
 def pdf_page_decorator(canvas, doc):
-    """Header + Footer cho mỗi trang PDF."""
+    """Footer cho mỗi trang PDF.
+
+    Toàn bộ Form Header chuẩn DNTU (5 phần) được chèn bằng Flowable
+    (build_pdf_header) trong `_build_pdf`, nên decorator này KHÔNG vẽ lại
+    header text đơn sơ nữa. Chỉ giữ số trang ở footer.
+    """
     canvas.saveState()
     w, h = PAGE_SIZE
-    canvas.setFont(PDF_FONT_B, 10)
-    canvas.drawString(2 * cm, h - 1.1 * cm, SCHOOL_NAME)
-    canvas.setFont(PDF_FONT, 9)
-    canvas.drawString(2 * cm, h - 1.5 * cm, FACULTY_NAME)
-    canvas.setLineWidth(0.8)
-    canvas.setStrokeColor(colors.black)
-    canvas.line(2 * cm, h - 1.7 * cm, w - 2 * cm, h - 1.7 * cm)
     canvas.setFont(PDF_FONT, 10)
     canvas.drawCentredString(w / 2, 1.0 * cm, f"Trang {doc.page}")
     canvas.restoreState()

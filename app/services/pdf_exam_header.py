@@ -83,6 +83,21 @@ def _st(name, fontName=PDF_FONT, size=10, leading=13,
 
 
 # ---------------------------------------------------------------------------
+# Helper: bọc text/chuỗi thành Paragraph (LUÔN dùng font Unicode đã đăng ký)
+# ---------------------------------------------------------------------------
+def _cell(text, name="cell", fontName=PDF_FONT, size=10, leading=13,
+          align=TA_LEFT, color=BLACK):
+    """Bọc một chuỗi UTF-8 thành Paragraph để cell Bảng dùng font Unicode.
+
+    Việc truyền chuỗi trần (plain str) vào cell Table khiến ReportLab dùng
+    font mặc định (Helvetica) -> ký tự tiếng Việt có dấu bị hiển thị thành
+    ô vuông đen (■). Hàm này ép fontName=PDF_FONT (TimesNewRoman) cho mọi ô.
+    """
+    return Paragraph(str(text), _st(name, fontName=fontName, size=size,
+                                    leading=leading, align=align, color=color))
+
+
+# ---------------------------------------------------------------------------
 # Helper: Wrap + Draw một Flowable lên canvas, trả về vị trí y mới (đỉnh trên)
 # ---------------------------------------------------------------------------
 def _push(canvas, fl, x, y, width, gap=0.15 * cm):
@@ -341,19 +356,25 @@ def generate_pdf_exam_header(canvas, doc):
 # ---------------------------------------------------------------------------
 # HÀM ĐỘC LẬP: build_dntu_exam_header()
 # ---------------------------------------------------------------------------
-def build_dntu_exam_header():
-    """Trả về list các Flowable (5 phần) để thêm vào Story của PDF.
+def build_pdf_header():
+    """Trả về list Flowable (5 phần) - Form Header chuẩn DNTU (dành cho PDF).
 
-    Đây là hàm dạng **Story-friendly** (khác với page decorator
-    `generate_pdf_exam_header`): chỉ cần `story += build_dntu_exam_header()`.
+    Đây là hàm dạng **Story-friendly**: chỉ cần `story += build_pdf_header()`.
+
+    Toàn bộ TableStyle & ParagraphStyle LUÔN dùng font TimesNewRoman (PDF_FONT)
+    để khắc phục triệt để lỗi ô vuông đen (■) khi xuất tiếng Việt có dấu
+    (KHÔNG dùng Helvetica).
 
     Cấu trúc 5 phần:
-      1. Bảng Phê duyệt      (1 dòng x 2 cột, kẻ dọc giữa, không viền ngoài)
-      2. Dòng text phân cách  (in nghiêng, size 9, căn giữa, Spacer trên/dưới)
-      3. Bảng Thông tin Đề thi (5 cột, lưới, dùng SPAN, Mã đề thi màu đỏ)
+      1. Bảng Phê duyệt      (1 dòng x 2 cột, căn giữa, không viền ngoài)
+      2. Dòng text phân cách  (in nghiêng, size 9, căn giữa)
+      3. Bảng Header Đề Thi  (4 cột x 4 hàng, GRID + SPAN, Mã đề thi màu đỏ)
       4. Bảng Thông tin Thí sinh (BOX, Nested Table MSSV 7 ô vuông)
-      5. Bảng Điểm số & Chữ ký (Grid 2x4) + Ô GHI CHÚ & QUY ĐỊNH THI (Box)
+      5. Bảng Điểm số & Chữ ký (Grid 2x4) + Khung GHI CHÚ & QUY ĐỊNH THI (BOX)
     """
+    from app.core.pdf_fonts import register_pdf_fonts
+    register_pdf_fonts()  # đảm bảo font TimesNewRoman đã được đăng ký
+
     flowables = []
 
     # =====================================================================
@@ -405,15 +426,15 @@ def build_dntu_exam_header():
     flowables.append(Spacer(1, 0.2 * cm))
 
     # =====================================================================
-    # PHẦN 3: BẢNG THÔNG TIN ĐỀ THI (5 cột, lưới, dùng SPAN)
+    # PHẦN 3: BẢNG HEADER ĐỀ THI (4 cột x 4 hàng, GRID + SPAN)
     # =====================================================================
-    # Cột:    0           1           2                3             4
-    # +------------------+-----------+----------------+--------------+------+
-    # | LOGO (sp)        | TITLE     | Học kỳ/năm học | 1            | 2026 |
-    # | (sp 0-3)         | (sp 0-1)  | Ngày thi       | 25/8/2026(sp)|
-    # |                  |           | Mã môn học     | ME2007 (sp)  |
-    # |                  |           | TL 60ph        | Mã đề   | 101(đỏ)|
-    # +------------------+-----------+----------------+--------------+------+
+    # Cột:    0            1                2             3
+    # +-------------------+-----------------+--------------+-------------+
+    # | LOGO / Tên trường | BÀI KIỂM TRA 01 | Học kỳ/năm   | 1/2026-2027 |
+    # | (sp rows 0-3)      | (sp rows 0-1)   | Ngày thi     | 25/8/2026   |
+    # |                   |                 | Mã môn học   | ME2007      |
+    # |                   |                 | Mã đề thi    | 101 (đỏ)    |
+    # +-------------------+-----------------+--------------+-------------+
     logo_para = Paragraph(
         f'<font color="#999999" size="8"><i>[LOGO]</i></font><br/>'
         f"<b>{DNTU_SCHOOL}</b><br/>"
@@ -425,34 +446,41 @@ def build_dntu_exam_header():
         f"<b>{EXAM_TITLE}</b>",
         _st("title", fontName=PDF_FONT_B, size=16, leading=20, align=TA_CENTER),
     )
+    # TẤT CẢ các ô có text đều bọc trong Paragraph (font Unicode TimesNewRoman)
+    # để tránh hiển thị ô vuông đen (■) do dùng font mặc định Helvetica.
     data_exam = [
-        [logo_para, title_para, "Học kỳ/năm học", "1", ACADEMIC_YEAR],
-        ["", "", "Ngày thi", EXAM_DAY, ""],
-        ["", "", "Mã môn học", SUBJECT_CODE, ""],
-        ["", "", "Thời lượng\t60 phút", "Mã đề thi", EXAM_CODE],
+        [logo_para, title_para,
+         _cell("Học kỳ/năm học", "lbl_hk", align=TA_CENTER),
+         _cell(f"{SEMESTER} / {ACADEMIC_YEAR}", "val_hk", align=TA_CENTER)],
+        ["", "",
+         _cell("Ngày thi", "lbl_day", align=TA_CENTER),
+         _cell(EXAM_DAY, "val_day", align=TA_CENTER)],
+        ["", "",
+         _cell("Mã môn học", "lbl_code", align=TA_CENTER),
+         _cell(SUBJECT_CODE, "val_subj", align=TA_CENTER)],
+        ["", "",
+         _cell("Mã đề thi", "lbl_examcode", align=TA_CENTER),
+         _cell(EXAM_CODE, "val_examcode",
+               fontName=PDF_FONT_B, color=RED, align=TA_CENTER)],
     ]
     w_left = 3.4 * cm
     w_title = 4.0 * cm
-    w_right = (CONTENT_W - w_left - w_title) / 3.0
+    w_right = (CONTENT_W - w_left - w_title) / 2.0
     tbl_exam = Table(
         data_exam,
-        colWidths=[w_left, w_title, w_right, w_right, w_right],
+        colWidths=[w_left, w_title, w_right, w_right],
     )
     tbl_exam.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        # LOGO trái trải 4 hàng
+        # Cột 1 (Logo/Tên trường) trải 4 hàng
         ("SPAN", (0, 0), (0, 3)),
-        # Tiêu đề giữa trải 2 hàng (dòng 0-1)
+        # Cột 2 (BÀI KIỂM TRA 01) trải 2 hàng
         ("SPAN", (1, 0), (1, 1)),
-        # Ngày thi: 25/8/2026 nối 2 ô cuối (cột 3-4)
-        ("SPAN", (3, 1), (4, 1)),
-        # Mã môn học: ME2007 nối 2 ô cuối (cột 3-4)
-        ("SPAN", (3, 2), (4, 2)),
         # Mã đề thi: màu đỏ, đậm
-        ("TEXTCOLOR", (4, 3), (4, 3), RED),
-        ("FONTNAME", (4, 3), (4, 3), PDF_FONT_B),
+        ("TEXTCOLOR", (3, 3), (3, 3), RED),
+        ("FONTNAME", (3, 3), (3, 3), PDF_FONT_B),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -604,6 +632,10 @@ def build_dntu_exam_header():
     return flowables
 
 
+# ----- Alias giữ tên cũ cho tương thích ngược -----
+build_dntu_exam_header = build_pdf_header
+
+
 # ---------------------------------------------------------------------------
 # Chạy thử độc lập:  python app/services/pdf_exam_header.py
 #   -> tạo _exam_header_sample.pdf
@@ -634,7 +666,7 @@ if __name__ == "__main__":
         f.write(bio.getvalue())
     print("Đã tạo file mẫu: _exam_header_sample.pdf")
 
-    # --- Demo: build_dntu_exam_header() (Story-friendly) ---
+    # --- Demo: build_pdf_header() (Story-friendly) ---
     bio2 = io.BytesIO()
     doc2 = SimpleDocTemplate(
         bio2,
@@ -643,9 +675,9 @@ if __name__ == "__main__":
         leftMargin=PDF_MARGIN_LEFT,
         topMargin=PDF_MARGIN_TOP,
         bottomMargin=PDF_MARGIN_BOTTOM,
-        title="Form De Thi DNTU (build_dntu_exam_header)",
+        title="Form De Thi DNTU (build_pdf_header)",
     )
-    story2 = build_dntu_exam_header()
+    story2 = build_pdf_header()
     story2.append(Spacer(1, 0.5 * cm))
     story2.append(Paragraph("[Nội dung câu hỏi bắt đầu từ đây...]",
                             _st("body", size=11, leading=15)))

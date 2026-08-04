@@ -86,18 +86,8 @@ def _setup_docx(doc: Document):
         st_rfonts = st_rpr.get_or_add_rFonts()
         st_rfonts.set(qn("w:eastAsia"), "Times New Roman")
 
-    header = section.header
-    hp = header.paragraphs[0]
-    hp.text = ""
-    r1 = hp.add_run(f"{SCHOOL_NAME}\n")
-    r1.font.size = Pt(10)
-    r1.bold = True
-    r2 = hp.add_run(f"{FACULTY_NAME}\n")
-    r2.font.size = Pt(10)
-    r2.bold = True
-    r3 = hp.add_run("─" * 60)
-    r3.font.size = Pt(8)
-    r3.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+    # Header text đơn sơ đã được XÓA BỎ. Form Header chuẩn DNTU (5 phần)
+    # sẽ được chèn bằng build_docx_header(doc) ở đầu build_docx_bytes.
 
     footer = section.footer
     fp = footer.paragraphs[0]
@@ -311,6 +301,11 @@ def build_docx_bytes(data: ExamData) -> io.BytesIO:
     """Tạo tài liệu Word (.docx) từ ExamData và trả về BytesIO."""
     doc = Document()
     _setup_docx(doc)
+    # =====================================================================
+    # FORM HEADER CHUẨN DNTU (5 phần) - chèn ngay đầu file
+    # =====================================================================
+    from app.services.docx_exam_header import build_docx_header
+    build_docx_header(doc)
     _add_cover_page_docx(doc, data.stats, data.stats.get("total", 0))
     for idx, q in enumerate(data.questions):
         if idx > 0:

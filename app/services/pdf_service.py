@@ -181,23 +181,16 @@ def _build_pdf(elements: list, data: ExamData, styles: dict):
     stats = data.stats
     total = stats.get("total", 0)
     batch = stats.get("batchCode", "N/A")
-    pdf_title = styles["title"]
-    pdf_sub = styles["sub"]
     pdf_h2 = styles["h2"]
     pdf_h3 = styles["h3"]
     pdf_normal = styles["normal"]
 
-    elements.append(Paragraph(esc(SCHOOL_NAME), pdf_title))
-    elements.append(Paragraph(esc(FACULTY_NAME), pdf_sub))
-    elements.append(Paragraph(esc(COURSE_NAME), pdf_sub))
-    elements.append(Spacer(1, 30))
-    elements.append(Paragraph(esc("BỘ ĐỀ THI & ĐÁP ÁN"), pdf_title))
-    elements.append(Paragraph(esc("DUNG SAI KỸ THUẬT & ĐO LƯỜNG (ISO 286)"), pdf_sub))
-    elements.append(Spacer(1, 24))
-    elements.append(Paragraph(f"Mã lô kiểm tra: {esc(batch)}", pdf_sub))
-    elements.append(Paragraph(f"Tổng số đề: {total} bài", pdf_sub))
-    elements.append(Spacer(1, 40))
-    elements.append(Paragraph("Ngày ...... tháng ...... năm 20......", pdf_sub))
+    # =====================================================================
+    # FORM HEADER CHUẨN DNTU (5 phần) - chèn ngay đầu trang
+    # =====================================================================
+    from app.services.pdf_exam_header import build_pdf_header
+    elements.extend(build_pdf_header())
+
     elements.append(PageBreak())
 
     for idx, q in enumerate(data.questions):
