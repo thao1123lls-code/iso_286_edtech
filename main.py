@@ -316,6 +316,21 @@ class HistorySaveResponse(BaseModel):
     count: int
 
 
+class StudentHistoryOut(BaseModel):
+    """Một bài thi đã nộp của sinh viên (GET /api/history/student/{mssv}).
+
+    Chỉ trả về các bài có trạng thái 'submitted' hoặc 'graded'.
+    TUYỆT ĐỐI KHÔNG trả về bài đang ở trạng thái assigned (mới giao).
+    """
+
+    mssv: str
+    examCode: str
+    exam_data: dict          # Đề bài chi tiết: D, hole, shaft, fit, student...
+    score: Optional[float] = None
+    submitted_at: Optional[datetime] = None
+    status: str
+
+
 # ===========================================================================
 # AUTHENTICATION HELPERS
 # ===========================================================================
@@ -398,6 +413,209 @@ def _login_handler(payload: LoginRequest) -> LoginResponse:
             department=user["department"],
         ),
     )
+
+
+# ===========================================================================
+# PYDANTIC SCHEMAS (Assignments - Bài tập Sinh viên)
+# ===========================================================================
+class AssignmentSubmitRequest(BaseModel):
+    """Payload POST /api/assignments/{mssv}/submit: câu trả lời của sinh viên.
+
+    Gồm 4 sai lệch giới hạn (µm):
+      - ES : Sai lệch giới hạn trên của Lỗ (Hole, Upper Deviation)
+      - EI : Sai lệch giới hạn dưới của Lỗ (Hole, Lower Deviation)
+      - es : Sai lệch giới hạn trên của Trục (Shaft, Upper Deviation)
+      - ei : Sai lệch giới hạn dưới của Trục (Shaft, Lower Deviation)
+    """
+
+    ES: float
+    EI: float
+    es: float
+    ei: float
+
+
+# ===========================================================================
+# ASSIGNMENT HELPERS (Tìm & Chấm điểm bài tập)
+# ===========================================================================
+def _find_assignment(mssv: str) -> dict:
+    """Tìm đề thi của sinh viên trong mock_assignments_db.
+
+    Nếu không tồn tại đề -> HTTP 404 (Idiomatic REST).
+
+    ⚠️ Chỉ dùng cho các endpoint cần đề thi BẮT BUỘC (VD: nộp bài).
+    Đối với endpoint GET lấy bài tập, hãy dùng `_find_assignment_or_none`
+    để trả về trạng thái rỗng (Empty State) thân thiện thay vì 404.
+    """
+    # Chuẩn hoá mssv: kiểu số (2110481) hoặc chữ ("2110481") đều hợp lệ.
+    mssv = str(mssv).strip()
+    for assignment in mock_assignments_db:
+        student = assignment.get("student", {})
+        if str(student.get("mssv", "")).strip() == mssv:
+            return assignment
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Không tìm thấy đề thi cho MSSV {mssv}. Liên hệ Giảng viên để được cấp đề.",
+    )
+
+
+def _find_assignment_or_none(mssv: str):
+    """Tìm đề thi nhưng KHÔNG raise 404 khi không tìm thấy.
+
+    Trả về:
+      - assignment dict nếu tìm thấy.
+      - None nếu sinh viên chưa được giao bài.
+    """
+    mssv = str(mssv).strip()
+    for assignment in mock_assignments_db:
+        student = assignment.get("student", {})
+        if str(student.get("mssv", "")).strip() == mssv:
+            return assignment
+    return None
+
+
+def _get_assignment_state(mssv: str) -> dict:
+    """Lấy state (status/score/student_answers/correct key) của một đề.
+
+    Mặc định chưa nộp: status = 'not_submitted', score = None.
+    """
+    assignment = _find_assignment(mssv)
+    hole, shaft = assignment["hole"], assignment["shaft"]
+    correct_answers = {
+        "ES": hole["ES"],
+        "EI": hole["EI"],
+        "es": shaft["es"],
+        "ei": shaft["ei"],
+    }
+    return {
+        "mssv": mssv,
+        "assignment": {
+            "D": assignment["D"],
+            "hole": hole,
+            "shaft": shaft,
+            "fit": assignment.get("fit", {}),
+            "student": assignment.get("student", {}),
+            "diffLabel": assignment.get("diffLabel", ""),
+            "examCode": assignment.get("examCode", ""),
+        },
+        "status": assignment.get("status", "not_submitted"),
+        "score": assignment.get("score"),
+        "student_answers": assignment.get("student_answers"),
+        "correct_answers": correct_answers,
+    }
+
+
+def _grade_assignment(mssv: str, answers: AssignmentSubmitRequest) -> dict:
+    """Chấm điểm tự động (Auto-grading) bài tập của sinh viên.
+
+    Quy tắc chấm:
+      - Mỗi thông số đúng (ép kiểu float trước khi so sánh) được +2.5 điểm.
+      - 4 thông số (ES, EI, es, ei) -> Tối đa 10.0 điểm.
+      - Điểm số được làm tròn 1 chữ số thập phân để tránh sai số dấu phẩy động.
+
+    Nếu đề đã nộp trước đó -> trả về kết quả đã lưu (không chấm lại).
+    """
+    state = _get_assignment_state(mssv)
+
+    # ❌ Đã nộp rồi: trả lại kết quả cũ, không cho nộp lại.
+    if state["status"] == "submitted" and state["score"] is not None:
+        return {
+            "mssv": mssv,
+            "status": "submitted",
+            "already_submitted": True,
+            "score": state["score"],
+            "correct_answers": state["correct_answers"],
+            "student_answers": state["student_answers"] or {},
+            "details": _build_result_details(state["correct_answers"], state["student_answers"] or {}),
+        }
+
+    assignment = _find_assignment(mssv)
+    # Ép kiểu dữ liệu float trước khi so sánh để tránh lỗi (string vs number).
+    student_answers = {
+        "ES": float(answers.ES),
+        "EI": float(answers.EI),
+        "es": float(answers.es),
+        "ei": float(answers.ei),
+    }
+
+    correct_answers = state["correct_answers"]
+    result_details = _build_result_details(correct_answers, student_answers)
+
+    score = round(sum(
+        2.5 for item in result_details if item["is_correct"]
+    ), 1)
+
+# ✅ Cập nhật trạng thái đề thi trong DB (mock_assignments_db).
+    assignment["status"] = "submitted"
+    assignment["score"] = score
+    assignment["student_answers"] = student_answers
+    assignment["submitted_at"] = datetime.utcnow()  # Thời điểm nộp bài (cho lịch sử)
+
+    return {
+        "mssv": mssv,
+        "status": "submitted",
+        "already_submitted": False,
+        "score": score,
+        "correct_answers": correct_answers,
+        "student_answers": student_answers,
+        "details": result_details,
+    }
+
+
+def _build_result_details(correct_answers: dict, student_answers: dict) -> list:
+    """Tạo bảng đối chiếu từng thông số: (key, correct, student, is_correct)."""
+    labels = {
+        "ES": "Sai lệch trên Lỗ - ES (µm)",
+        "EI": "Sai lệch dưới Lỗ - EI (µm)",
+        "es": "Sai lệch trên Trục - es (µm)",
+        "ei": "Sai lệch dưới Trục - ei (µm)",
+    }
+    details = []
+    for key in ("ES", "EI", "es", "ei"):
+        correct_val = float(correct_answers[key])
+        student_val = float(student_answers.get(key, 0))
+        details.append({
+            "key": key,
+            "label": labels[key],
+            "correct": correct_answers[key],
+            "student": student_val,
+            "is_correct": abs(correct_val - student_val) < 1e-9,
+        })
+    return details
+
+
+# ===========================================================================
+# ASSIGNMENT ENDPOINTS (SINH VIÊN LÀM & NỘP BÀI - AUTO-GRADING)
+# ===========================================================================
+def _get_assignment(mssv: str) -> dict:
+    """GET /api/assignments/{mssv}: trả về đề thi + trạng thái nộp bài.
+
+    Frontend dùng trường `status` để quyết định:
+      - 'not_submitted' -> hiện Form nhập liệu.
+      - 'submitted'     -> ẩn Form, hiện Thẻ Kết Quả (Result Card).
+      - 'empty'         -> sinh viên chưa được giao bài (Empty State).
+
+    Graceful Degradation: nếu KHÔNG tìm thấy đề thi của mssv, KHÔNG raise 404.
+    Thay vào đó trả về HTTP 200 kèm JSON báo hiệu rỗng:
+      {"status": "empty", "message": "Bạn chưa có bài tập mới nào."}
+    """
+    assignment = _find_assignment_or_none(mssv)
+    if assignment is None:
+        # Graceful Degradation: KHÔNG dùng raise HTTPException(404).
+        # Trả về HTTP 200 + status "empty" để frontend hiển thị Empty State thân thiện.
+        return {
+            "status": "empty",
+            "message": "Bạn chưa có bài tập mới nào.",
+            "mssv": str(mssv),
+        }
+    return _get_assignment_state(mssv)
+
+
+def _submit_assignment(mssv: str, payload: AssignmentSubmitRequest) -> dict:
+    """POST /api/assignments/{mssv}/submit: nhận câu trả lời -> chấm & lưu điểm.
+
+    Payload JSON: {"ES": ..., "EI": ..., "es": ..., "ei": ...}
+    """
+    return _grade_assignment(mssv, payload)
 
 
 # ===========================================================================
@@ -489,6 +707,57 @@ def _list_history(db: Session = Depends(get_db)) -> List[HistoryBatchOut]:
     return result
 
 
+def _list_student_history(mssv: str) -> List[StudentHistoryOut]:
+    """GET /api/history/student/{mssv}: lịch sử bài đã NỘP của một sinh viên.
+
+    QUYỀN SINH VIÊN:
+    - Chỉ trả về các bài tập THUỘC VỀ đúng mssv đó.
+    - Chỉ lấy những bài có status ∈ {"submitted", "graded"} (đã nộp / đã chấm).
+    - TUYỆT ĐỐI KHÔNG trả về bài đang ở trạng thái 'assigned' (mới được giao,
+      chưa làm) hoặc 'not_submitted' (chưa nộp).
+
+    Nếu mssv không tồn tại hoặc chưa nộp bài nào -> trả về danh sách rỗng ([]),
+    để frontend hiển thị Empty State thân thiện.
+    """
+    mssv = str(mssv).strip()
+    allowed_statuses = {"submitted", "graded"}
+    result: List[StudentHistoryOut] = []
+
+    for assignment in mock_assignments_db:
+        student = assignment.get("student", {})
+        if str(student.get("mssv", "")).strip() != mssv:
+            continue  # (1) Không thuộc về sinh viên này -> bỏ qua.
+        status = assignment.get("status", "not_submitted")
+        if status not in allowed_statuses:
+            continue  # (2) Chưa nộp / mới giao -> TUYỆT ĐỐI bỏ qua.
+
+        # Đề bài chi tiết (D, Lỗ, Trục, đặc tính lắp ghép...).
+        exam_data = {
+            "D": assignment.get("D"),
+            "hole": assignment.get("hole", {}),
+            "shaft": assignment.get("shaft", {}),
+            "fit": assignment.get("fit", {}),
+            "student": student,
+            "diffLabel": assignment.get("diffLabel", ""),
+            "examCode": assignment.get("examCode", ""),
+        }
+
+        result.append(
+            StudentHistoryOut(
+                mssv=mssv,
+                examCode=assignment.get("examCode", ""),
+                exam_data=exam_data,
+                score=assignment.get("score"),
+                submitted_at=assignment.get("submitted_at"),
+                status=status,
+            )
+        )
+
+    # Sắp xếp bài mới nhất (theo thời gian nộp) lên đầu.
+    result.sort(key=lambda r: r.submitted_at or datetime.min, reverse=True)
+    return result
+
+
 # ===========================================================================
 # LIFESPAN (KHỞI TẠO DB + SEED)
 # ===========================================================================
@@ -565,5 +834,40 @@ app.add_api_route(
     dependencies=[Depends(get_current_user)],
     tags=["history"],
     summary="Lấy danh sách lô đề thi đã tạo (nhóm theo batch_code)",
+)
+
+# /api/history/student/{mssv} - Lịch sử bài đã NỘP của một sinh viên.
+#   -> chỉ trả về bài có status ∈ {"submitted", "graded"} (đã nộp / đã chấm).
+#   -> TUYỆT ĐỐI KHÔNG trả về bài đang ở trạng thái assigned (mới giao, chưa làm).
+#   -> bảo vệ bằng Depends(get_current_user)
+app.add_api_route(
+    "/api/history/student/{mssv}",
+    _list_student_history,
+    methods=["GET"],
+    response_model=List[StudentHistoryOut],
+    dependencies=[Depends(get_current_user)],
+    tags=["history"],
+    summary="Lấy lịch sử bài đã NỘP của sinh viên (chỉ trả về bài đã nộp / đã chấm)",
+)
+
+# /api/assignments/* - MỌI user đã đăng nhập (lecturer & student) đều truy cập được.
+#   -> bảo vệ bằng Depends(get_current_user)
+# GET  /api/assignments/{mssv}           : lấy đề thi + trạng thái nộp bài.
+# POST /api/assignments/{mssv}/submit    : nộp bài & chấm điểm tự động (auto-grading).
+app.add_api_route(
+    "/api/assignments/{mssv}",
+    _get_assignment,
+    methods=["GET"],
+    dependencies=[Depends(get_current_user)],
+    tags=["assignments"],
+    summary="Lấy đề thi của sinh viên + trạng thái nộp bài",
+)
+app.add_api_route(
+    "/api/assignments/{mssv}/submit",
+    _submit_assignment,
+    methods=["POST"],
+    dependencies=[Depends(get_current_user)],
+    tags=["assignments"],
+    summary="Nộp bài tập & chấm điểm tự động (Auto-grading)",
 )
 

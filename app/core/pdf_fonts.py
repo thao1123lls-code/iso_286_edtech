@@ -17,8 +17,8 @@ from app.core.config import SCHOOL_NAME, FACULTY_NAME, PAGE_SIZE
 from app.core.utils import esc as _esc  # noqa: F401 (re-export convenience)
 
 # Tên font mặc định (sẽ được gán lại sau khi đăng ký thành công)
-PDF_FONT = "TNR"
-PDF_FONT_B = "TNR-Bold"
+PDF_FONT = "TimesNewRoman"
+PDF_FONT_B = "TimesNewRoman-Bold"
 PDF_FONT_I = "TNR-Italic"
 PDF_FONT_BI = "TNR-BoldItalic"
 
@@ -83,15 +83,24 @@ def register_pdf_fonts():
     bold = _find_font("bold") or normal
     italic = _find_font("italic") or normal
     bold_italic = _find_font("boldItalic") or bold
-    pdfmetrics.registerFont(TTFont("TNR", normal))
-    pdfmetrics.registerFont(TTFont("TNR-Bold", bold))
+    # Đăng ký 2 font Times New Roman (TimesNewRoman / TimesNewRoman-Bold)
+    # trong try...except để xử lý lỗi thiếu file font.
+    try:
+        pdfmetrics.registerFont(TTFont("TimesNewRoman", normal))
+        pdfmetrics.registerFont(TTFont("TimesNewRoman-Bold", bold))
+        PDF_FONT, PDF_FONT_B = "TimesNewRoman", "TimesNewRoman-Bold"
+    except FileNotFoundError as e:
+        print(f"WARNING: Không tìm thấy font Times New Roman ({e}). "
+              f"Fallback sang font thay thế.")
+        pdfmetrics.registerFont(TTFont("TNR", normal))
+        pdfmetrics.registerFont(TTFont("TNR-Bold", bold))
+        PDF_FONT, PDF_FONT_B = "TNR", "TNR-Bold"
     pdfmetrics.registerFont(TTFont("TNR-Italic", italic))
     pdfmetrics.registerFont(TTFont("TNR-BoldItalic", bold_italic))
     registerFontFamily(
-        "TNR", normal="TNR", bold="TNR-Bold",
+        "TNR", normal=PDF_FONT, bold=PDF_FONT_B,
         italic="TNR-Italic", boldItalic="TNR-BoldItalic",
     )
-    PDF_FONT, PDF_FONT_B = "TNR", "TNR-Bold"
     PDF_FONT_I, PDF_FONT_BI = "TNR-Italic", "TNR-BoldItalic"
 
 

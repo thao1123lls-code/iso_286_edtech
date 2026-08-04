@@ -2158,6 +2158,738 @@
             );
         };
 
+// ===================================================================
+        // STUDENT HISTORY SCREEN - Lịch sử bài đã NỘP của sinh viên
+        // ===================================================================
+        // Chỉ hiển thị cho role 'student'. Gọi GET /api/history/student/{mssv}
+        // để lấy các bài đã NỘP (status ∈ {submitted, graded}) + điểm số.
+        // Backend TUYỆT ĐỐI KHÔNG trả về bài đang ở trạng thái assigned (mới giao).
+        const StudentHistoryScreen = ({ currentUser }) => {
+            // MSSV của sinh viên đang đăng nhập (username trùng MSSV).
+            const mssv = (currentUser && currentUser.username) || '';
+
+            const [items, setItems] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+            const [viewing, setViewing] = useState(null); // bài đang xem chi tiết
+
+            const loadHistory = async () => {
+                setLoading(true);
+                setError('');
+                try {
+                    const res = await fetch(`http://127.0.0.1:8000/api/history/student/${mssv}`, {
+                        headers: getAuthHeaders()
+                    });
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền truy cập.');
+                    }
+                    // Graceful Degradation: Chỉ hiện lỗi đỏ khi server thực sự lỗi (HTTP >= 500)
+                    // hoặc lỗi mạng. Mọi mã khác (404, 422, ...) -> xem như chưa nộp bài nào (rỗng).
+                    if (!res.ok) {
+                        if (res.status >= 500) {
+                            throw new Error(`Lỗi máy chủ: HTTP ${res.status}`);
+                        }
+                        setItems([]);
+                        return;
+                    }
+                    const data = await res.json();
+                    setItems(Array.isArray(data) ? data : []);
+                } catch (err) {
+                    console.error('[StudentHistory] Lỗi tải lịch sử:', err);
+                    setError(err.message || 'Không thể tải lịch sử bài đã nộp. Vui lòng đảm bảo Backend đang chạy (uvicorn main:app --reload).');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Gọi API khi component được mount.
+            useEffect(() => {
+                if (mssv) loadHistory();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, [mssv]);
+
+            const formatDate = (val) => {
+                if (!val) return '—';
+                const d = new Date(val);
+                if (isNaN(d.getTime())) return val;
+                return d.toLocaleString('vi-VN', {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit'
+                });
+            };
+
+            const scoreTone = (score) => {
+                if (score == null) return 'text-slate-500';
+                if (score >= 8) return 'text-emerald-600 dark:text-emerald-400';
+                if (score >= 5) return 'text-amber-600 dark:text-amber-400';
+                return 'text-rose-600 dark:text-rose-400';
+            };
+
+            const scoreBadge = (score) => {
+                if (score == null) return { label: 'Đã nộp', cls: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700' };
+                if (score >= 8) return { label: 'Xuất sắc', cls: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800' };
+                if (score >= 5) return { label: 'Đạt', cls: 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800' };
+                return { label: 'Cần cố gắng', cls: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-300 dark:border-rose-800' };
+            };
+
+            return (
+                <div className="space-y-8 animate-fadeInUp">
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-primary-glow">
+                                    <Icon name="clock-rotate-left" />
+                                </div>
+                                <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Lịch Sử Bài Đã Nộp</h2>
+                            </div>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 ml-14">Các bài tập bạn đã nộp và điểm chấm tự động theo chuẩn ISO 286.</p>
+                        </div>
+                        <button
+                            onClick={loadHistory}
+                            disabled={loading}
+                            className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm disabled:opacity-60">
+                            <Icon name="rotate" className={loading ? 'fa-spin' : ''} /> Làm mới
+                        </button>
+                    </div>
+
+                    {loading && (
+                        <Card className="p-10 text-center text-slate-500 dark:text-slate-400">
+                            <Icon name="spinner" className="fa-spin text-3xl text-primary-500 mb-3" />
+                            <div>Đang tải lịch sử bài đã nộp...</div>
+                        </Card>
+                    )}
+
+                    {error && !loading && (
+                        <div className="bg-rose-50 border border-rose-300 border-l-4 border-l-rose-500 text-rose-700 px-5 py-4 rounded-xl shadow-sm flex items-start gap-3" role="alert">
+                            <Icon name="circle-exclamation" className="mt-0.5 text-rose-500" />
+                            <div>
+                                <strong className="font-bold block mb-0.5">Không tải được lịch sử!</strong>
+                                <span className="block sm:inline">{error}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {!loading && !error && items.length === 0 && (
+                        <Card className="p-12 text-center">
+                            <div className="w-20 h-20 mx-auto rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-4xl text-slate-400 mb-4">
+                                <Icon name="folder-open" />
+                            </div>
+<h3 className="text-lg font-bold text-slate-700 dark:text-slate-200 mb-1">Bạn chưa nộp bài tập nào</h3>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Hãy vào mục "Bài Tập Của Tôi" để làm và nộp bài. Sau khi nộp, kết quả và điểm sẽ hiển thị tại đây.</p>
+                        </Card>
+                    )}
+
+                    {!loading && !error && items.length > 0 && (
+                        <div className="flex flex-col gap-4">
+                            {items.map((item, idx) => {
+                                const ed = item.exam_data || {};
+                                const hole = ed.hole || {};
+                                const shaft = ed.shaft || {};
+                                const fit = ed.fit || {};
+                                const badge = scoreBadge(item.score);
+                                return (
+                                    <Card key={idx} className="p-5 lg:p-6">
+                                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center text-xl shadow-primary-glow shrink-0">
+                                                    <Icon name="file-lines" />
+                                                </div>
+                                                <div>
+                                                    <div className="font-mono font-bold text-lg text-slate-900 dark:text-white">
+                                                        {ed.D ? `ϕ${ed.D} ${hole.sym}${hole.it}/${shaft.sym}${shaft.it}` : (item.examCode || 'Bài thi')}
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2">
+                                                        <Icon name="calendar-days" className="text-slate-400" /> Nộp lúc: {formatDate(item.submitted_at)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3 flex-wrap">
+                                                <div className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-semibold flex items-center gap-2">
+                                                    <Icon name="gauge-high" className="text-primary-500" /> {fit.type || '—'}
+                                                </div>
+                                                <div className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-2 border ${badge.cls}`}>
+                                                    <Icon name="trophy" /> {item.score != null ? `${item.score} / 10.0` : 'Đã nộp'}
+                                                </div>
+                                                <button
+                                                    onClick={() => setViewing(item)}
+                                                    className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm">
+                                                    <Icon name="eye" /> Xem chi tiết
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Modal "Xem chi tiết" - hiển thị đề bài + điểm + đáp án */}
+                    {viewing && (
+                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4 lg:p-8" onClick={() => setViewing(null)}>
+                            <div className="w-full max-w-3xl bg-white dark:bg-slate-800 rounded-2xl shadow-2xl my-4" onClick={e => e.stopPropagation()}>
+                                <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4 lg:p-5 flex justify-between items-center rounded-t-2xl z-10 no-print">
+                                    <div>
+                                        <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
+                                            <Icon name="file-lines" className="text-emerald-500" /> Chi tiết bài đã nộp
+                                        </h3>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                                            {viewing.examCode || '—'} · Nộp lúc {formatDate(viewing.submitted_at)}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setViewing(null)} className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all duration-300">
+                                        <Icon name="xmark" />
+                                    </button>
+                                </div>
+
+                                <div className="p-4 lg:p-6 bg-white text-black overflow-y-auto max-h-[80vh]">
+                                    {(() => {
+                                        const ed = viewing.exam_data || {};
+                                        const hole = ed.hole || {};
+                                        const shaft = ed.shaft || {};
+                                        const fit = ed.fit || {};
+                                        const student = ed.student || {};
+                                        const badge = scoreBadge(viewing.score);
+                                        return (
+                                            <div className="space-y-5">
+                                                {/* Điểm số */}
+                                                <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                                                    <div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400">Điểm chấm tự động</div>
+                                                        <div className={`text-3xl font-bold font-mono ${scoreTone(viewing.score)}`}>
+                                                            {viewing.score != null ? `${viewing.score} / 10.0` : '—'}
+                                                        </div>
+                                                    </div>
+                                                    <span className={`px-3 py-1.5 rounded-full font-bold text-sm border ${badge.cls}`}>{badge.label}</span>
+                                                </div>
+
+                                                {/* Thông tin đề + sinh viên */}
+                                                <div className="bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                                                    <div className="text-xs uppercase tracking-wider font-bold text-slate-500 mb-2">Đề bài</div>
+                                                    <div className="font-mono text-xl font-bold text-slate-900 dark:text-white">
+                                                        {ed.D ? `ϕ${ed.D} ${hole.sym}${hole.it}/${shaft.sym}${shaft.it}` : viewing.examCode}
+                                                    </div>
+                                                    <div className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                                                        {student.name || '—'} · MSSV: <strong>{student.mssv || viewing.mssv}</strong> · {student.className || '—'}
+                                                    </div>
+                                                    {fit.type && (
+                                                        <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">{fit.type}</div>
+                                                    )}
+                                                </div>
+
+                                                {/* Chi tiết dung sai */}
+                                                {hole.sym && shaft.sym && (
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-sm">
+                                                        <div className="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                                                            <div className="font-bold border-b border-slate-200 dark:border-slate-700 pb-1 mb-2 text-primary-800">Lỗ ϕ{ed.D} {hole.sym}{hole.it}</div>
+                                                            <div>ES = {hole.ES > 0 ? `+${hole.ES}` : hole.ES} μm</div>
+                                                            <div>EI = {hole.EI} μm</div>
+                                                            <div>Dmax = {hole.Dmax.toFixed(3)} mm</div>
+                                                            <div>Dmin = {hole.Dmin.toFixed(3)} mm</div>
+                                                            <div>TD = {hole.T} μm</div>
+                                                        </div>
+                                                        <div className="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                                                            <div className="font-bold border-b border-slate-200 dark:border-slate-700 pb-1 mb-2 text-amber-800">Trục ϕ{ed.D} {shaft.sym}{shaft.it}</div>
+                                                            <div>es = {shaft.es > 0 ? `+${shaft.es}` : shaft.es} μm</div>
+                                                            <div>ei = {shaft.ei > 0 ? `+${shaft.ei}` : shaft.ei} μm</div>
+                                                            <div>dmax = {shaft.dmax.toFixed(3)} mm</div>
+                                                            <div>dmin = {shaft.dmin.toFixed(3)} mm</div>
+                                                            <div>Td = {shaft.T} μm</div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Đặc tính lắp ghép */}
+                                                {fit.type && (
+                                                    <div className="font-mono text-sm border p-3 rounded bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700">
+                                                        <div className="font-bold border-b border-slate-200 dark:border-slate-700 pb-1 mb-2 font-sans text-rose-700">Đặc tính lắp ghép: {fit.type.toUpperCase()}</div>
+                                                        <div className="grid grid-cols-2 gap-4">
+                                                            <div>Smax = {fit.Smax} μm</div>
+                                                            <div>Smin = {fit.Smin} μm</div>
+                                                            <div>Nmax = {fit.Nmax} μm</div>
+                                                            <div>TS,N = {fit.TN} μm</div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ===================================================================
+        // STUDENT PORTAL - Module Sinh viên làm bài, nộp bài & Chấm điểm tự động
+        // ===================================================================
+        const StudentPortal = ({ currentUser }) => {
+            // MSSV của sinh viên đang đăng nhập (username trùng MSSV).
+            const mssv = (currentUser && currentUser.username) || '';
+
+            // State Form nhập liệu: ES, EI, es, ei (đơn vị µm).
+            const [formData, setFormData] = useState({ ES: '', EI: '', es: '', ei: '' });
+
+// State dữ liệu bài tập & kết quả.
+            const [assignment, setAssignment] = useState(null);
+            const [result, setResult] = useState(null);       // kết quả chấm điểm (result.details)
+            const [loading, setLoading] = useState(true);
+            const [submitting, setSubmitting] = useState(false);
+            const [isEmpty, setIsEmpty] = useState(false);      // sinh viên chưa có bài tập
+            const [error, setError] = useState('');
+
+            // Hàm gọi API GET /api/assignments/{mssv} để tải đề + trạng thái.
+            const loadAssignment = async () => {
+                setLoading(true);
+                setError('');
+                setIsEmpty(false);
+                try {
+                    const res = await fetch(`http://127.0.0.1:8000/api/assignments/${mssv}`, {
+                        headers: getAuthHeaders()
+                    });
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền truy cập.');
+                    }
+                    // Graceful Degradation: Chỉ hiện khung lỗi đỏ khi server thực sự lỗi
+                    // (HTTP >= 500) hoặc lỗi mạng. Mọi mã khác (404, 422, ...) đều được
+                    // coi là "chưa có bài tập" -> hiển thị Empty State thân thiện.
+                    if (!res.ok) {
+                        if (res.status >= 500) {
+                            throw new Error(`Lỗi máy chủ: HTTP ${res.status}`);
+                        }
+                        // 4xx (VD 404) hoặc mã khác -> không có bài tập, xem như rỗng.
+                        setIsEmpty(true);
+                        setAssignment(null);
+                        return;
+                    }
+
+                    const data = await res.json();
+                    setAssignment(data);
+
+                    // Graceful Degradation: Backend trả về {"status": "empty"} khi SV chưa có bài.
+                    if (data.status === 'empty') {
+                        setIsEmpty(true);
+                        setAssignment(null);
+                        return;
+                    }
+
+                    // Nếu đề đã nộp -> hiện Thẻ Kết Quả ngay, ẩn form.
+                    if (data.status === 'submitted') {
+                        setResult({
+                            score: data.score,
+                            details: (data.details || []).length
+                                ? data.details
+                                : buildDetailsFromState(data),
+                            correct_answers: data.correct_answers,
+                            student_answers: data.student_answers,
+                            already_submitted: true
+                        });
+                    }
+                } catch (err) {
+                    // Chỉ hiện lỗi đỏ khi thực sự là lỗi mạng / server sập (network error).
+                    console.error('[StudentPortal] Lỗi tải bài tập:', err);
+                    setError(err.message || 'Không thể tải bài tập. Vui lòng đảm bảo Backend đang chạy.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Dựng bảng đối chiếu từ GET response (khi GET không kèm details).
+            const buildDetailsFromState = (data) => {
+                const correct = data.correct_answers || {};
+                const student = data.student_answers || {};
+                const labels = {
+                    ES: 'Sai lệch trên Lỗ - ES (µm)',
+                    EI: 'Sai lệch dưới Lỗ - EI (µm)',
+                    es: 'Sai lệch trên Trục - es (µm)',
+                    ei: 'Sai lệch dưới Trục - ei (µm)'
+                };
+                return ['ES', 'EI', 'es', 'ei'].map(key => {
+                    const c = Number(correct[key]);
+                    const s = Number(student[key]);
+                    return {
+                        key,
+                        label: labels[key],
+                        correct: correct[key],
+                        student: student[key],
+                        is_correct: Math.abs(c - s) < 1e-9
+                    };
+                });
+            };
+
+            // Gọi tải bài tập khi component mount.
+            useEffect(() => {
+                if (mssv) loadAssignment();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, [mssv]);
+
+            // Hàm xử lý khi sinh viên bấm nút "NỘP BÀI".
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+
+                // Kiểm tra tất cả 4 ô đều đã nhập.
+                const emptyKeys = Object.keys(formData).filter(k => formData[k] === '' || formData[k] === null || isNaN(Number(formData[k])));
+                if (emptyKeys.length > 0) {
+                    setError('Vui lòng nhập đầy đủ và hợp lệ cả 4 thông số (ES, EI, es, ei).');
+                    return;
+                }
+
+                setSubmitting(true);
+                setError('');
+                try {
+                    const payload = {
+                        ES: Number(formData.ES),
+                        EI: Number(formData.EI),
+                        es: Number(formData.es),
+                        ei: Number(formData.ei)
+                    };
+
+                    // Gọi API POST /api/assignments/{mssv}/submit (Auto-grading).
+                    const res = await fetch(`http://127.0.0.1:8000/api/assignments/${mssv}/submit`, {
+                        method: 'POST',
+                        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền nộp bài.');
+                    }
+
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        throw new Error(data.detail || `Lỗi máy chủ: HTTP ${res.status}`);
+                    }
+
+                    // Lưu kết quả chấm điểm -> ẩn form, hiện Thẻ Kết Quả.
+                    setResult({
+                        score: data.score,
+                        details: data.details || [],
+                        correct_answers: data.correct_answers,
+                        student_answers: data.student_answers,
+                        already_submitted: !!data.already_submitted
+                    });
+                    setAssignment(prev => prev ? { ...prev, status: 'submitted', score: data.score } : prev);
+                } catch (err) {
+                    console.error('[StudentPortal] Lỗi nộp bài:', err);
+                    setError(err.message || 'Nộp bài thất bại. Vui lòng thử lại.');
+                } finally {
+                    setSubmitting(false);
+                }
+            };
+
+            // Reset form về trống.
+            const handleReset = () => {
+                setFormData({ ES: '', EI: '', es: '', ei: '' });
+                setError('');
+            };
+
+            // Kiểm tra trạng thái đã nộp -> ẩn form, hiện kết quả.
+            const isSubmitted = result !== null &&
+                (result.already_submitted || assignment?.status === 'submitted');
+
+            if (loading) {
+                return (
+                    <Card className="p-12 text-center text-slate-500 dark:text-slate-400">
+                        <Icon name="spinner" className="fa-spin text-3xl text-primary-500 mb-3" />
+                        <div>Đang tải bài tập ISO 286 cho MSSV {mssv}...</div>
+                    </Card>
+                );
+            }
+
+if (error && !assignment) {
+                return (
+                    <div className="space-y-6 animate-fadeInUp">
+                        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 border-l-4 border-l-rose-500 text-rose-700 dark:text-rose-300 px-5 py-4 rounded-xl shadow-sm flex items-start gap-3" role="alert">
+                            <Icon name="circle-exclamation" className="mt-0.5 text-rose-500" />
+                            <div>
+                                <strong className="font-bold block mb-0.5">Không tải được bài tập!</strong>
+                                <span className="block sm:inline">{error}</span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ===== EMPTY STATE: Sinh viên chưa được giao bài tập =====
+            // Backend trả về {"status": "empty"} (HTTP 200) khi không tìm thấy đề.
+            // Hiển thị Empty State thân thiện thay vì hộp thoại lỗi đỏ.
+            if (isEmpty && !assignment && !error) {
+                return (
+                    <div className="space-y-8 animate-fadeInUp">
+                        <div className="flex items-center gap-3 mb-2">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-primary-glow">
+                                <Icon name="pen-to-square" />
+                            </div>
+                            <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Bài Tập Của Tôi</h2>
+                        </div>
+
+                        <Card className="p-16 text-center">
+                            <div className="w-24 h-24 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-5xl text-slate-300 dark:text-slate-600 mb-5">
+                                <Icon name="folder-open" />
+                            </div>
+<h3 className="text-xl font-bold text-slate-700 dark:text-slate-200 mb-2">Chưa có bài tập nào được giao. Hãy quay lại sau!</h3>
+                            <p className="text-base text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                                Hãy chờ giảng viên phát đề! Khi có bài tập mới, nó sẽ xuất hiện tại đây.
+                            </p>
+                        </Card>
+                    </div>
+                );
+            }
+
+            const a = assignment ? assignment.assignment : null;
+            const hole = a ? a.hole : null;
+            const shaft = a ? a.shaft : null;
+
+            return (
+                <div className="space-y-8 animate-fadeInUp">
+                    {/* Header */}
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-primary-glow">
+                                    <Icon name="pen-to-square" />
+                                </div>
+                                <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Bài Tập Của Tôi</h2>
+                            </div>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 ml-14">Làm bài, nộp và hệ thống tự động chấm điểm theo chuẩn ISO 286.</p>
+                        </div>
+                        {a && (
+                            <div className="text-right bg-white dark:bg-slate-800 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60 shadow-soft">
+                                <div className="text-xs text-slate-500 dark:text-slate-400">Mã đề</div>
+                                <div className="font-mono font-bold text-sm text-slate-800 dark:text-white">{a.examCode || '—'}</div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Thông tin sinh viên + đề bài */}
+                    {assignment && !isSubmitted && (
+                        <Card className="p-6 lg:p-8 no-print space-y-6">
+                            <div className="flex flex-col md:flex-row md:items-center gap-4 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/30 dark:to-teal-950/15 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl p-5">
+                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center text-xl shrink-0">
+                                    <Icon name="circle-user" />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="font-bold text-base text-slate-900 dark:text-white">{a.student.name}</div>
+                                    <div className="text-sm font-mono text-slate-600 dark:text-slate-300">
+                                        MSSV: <strong>{a.student.mssv}</strong> · Lớp: <strong>{a.student.className}</strong>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">Đề bài</div>
+                                    <div className="font-mono text-xl font-bold text-slate-900 dark:text-white">
+                                        ϕ{a.D} {hole.sym}{hole.it}/{shaft.sym}{shaft.it}
+                                    </div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{a.diffLabel} · {a.fit.type}</div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="font-bold text-lg tracking-tight text-slate-800 dark:text-white mb-3 flex items-center gap-2">
+                                    <Icon name="list-check" className="text-emerald-500" /> Yêu cầu: Tra Sai lệch giới hạn của Lỗ & Trục
+                                </h3>
+                                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
+                                    Cho mối ghép trụ tròn <strong className="font-mono">ϕ{a.D} {hole.sym}{hole.it}/{shaft.sym}{shaft.it}</strong>.
+                                    Hãy tra bảng ISO 286 và điền đầy đủ 4 sai lệch giới hạn (đơn vị <strong>µm</strong>):
+                                </p>
+
+                                {/* Form nhập liệu đáp án */}
+                                <form onSubmit={handleSubmit} className="grid grid-cols-2 lg:grid-cols-4 gap-4 no-print">
+                                    {[
+                                        { key: 'ES', label: 'ES (Lỗ)', sub: 'Sai lệch trên Lỗ', tone: 'hole', icon: 'arrow-up-from-bracket' },
+                                        { key: 'EI', label: 'EI (Lỗ)', sub: 'Sai lệch dưới Lỗ', tone: 'hole', icon: 'arrow-down-to-bracket' },
+                                        { key: 'es', label: 'es (Trục)', sub: 'Sai lệch trên Trục', tone: 'shaft', icon: 'arrow-up-from-bracket' },
+                                        { key: 'ei', label: 'ei (Trục)', sub: 'Sai lệch dưới Trục', tone: 'shaft', icon: 'arrow-down-to-bracket' }
+                                    ].map(field => {
+                                        const isHole = field.tone === 'hole';
+                                        return (
+                                            <div key={field.key} className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 transition-all duration-300 hover:border-emerald-400 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
+                                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">
+                                                    <Icon name={field.icon} className={`mr-1 ${isHole ? 'text-hole-text' : 'text-shaft-text'}`} />
+                                                    {field.label}
+                                                </label>
+                                                <div className="text-[10px] text-slate-400 dark:text-slate-500 mb-2">{field.sub}</div>
+                                                <input
+                                                    type="number"
+                                                    step="any"
+                                                    value={formData[field.key]}
+                                                    onChange={e => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                                    placeholder="µm"
+                                                    className={`w-full bg-white dark:bg-slate-800 border ${isHole ? 'border-hole-border/60 focus:ring-hole-border/40' : 'border-shaft-border/60 focus:ring-shaft-border/40'} rounded-xl p-3 text-slate-900 dark:text-white font-mono font-bold text-center outline-none focus:ring-2 transition-all duration-300 shadow-sm placeholder:text-slate-300 dark:placeholder:text-slate-600`}
+                                                />
+                                            </div>
+                                        );
+                                    })}
+
+                                    {error && (
+                                        <div className="col-span-2 lg:col-span-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 border-l-4 border-l-rose-500 text-rose-700 dark:text-rose-300 px-4 py-3 rounded-xl text-sm flex items-start gap-2.5" role="alert">
+                                            <Icon name="circle-exclamation" className="mt-0.5 shrink-0" />
+                                            <span>{error}</span>
+                                        </div>
+                                    )}
+
+                                    <div className="col-span-2 lg:col-span-4 flex flex-col sm:flex-row gap-3 pt-1">
+                                        <button
+                                            type="submit"
+                                            disabled={submitting}
+                                            className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold rounded-xl p-4 transition-all duration-300 flex items-center justify-center gap-2 shadow-soft hover:shadow-primary-glow hover:scale-[1.01] active:scale-[0.99] tracking-wide"
+                                        >
+                                            {submitting ? <Icon name="spinner" className="fa-spin" /> : <Icon name="paper-plane" />}
+                                            {submitting ? 'Đang chấm bài...' : 'NỘP BÀI'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleReset}
+                                            disabled={submitting}
+                                            className="sm:w-44 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.02] active:scale-95 text-sm disabled:opacity-60"
+                                        >
+                                            <Icon name="eraser" /> Nhập lại
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </Card>
+                    )}
+
+                    {/* ====== THẺ KẾT QUẢ (RESULT CARD) ====== */}
+                    {isSubmitted && result && (
+                        <Card className={`overflow-hidden border-0 ${result.score >= 8 ? 'border-t-4 border-t-emerald-500' : result.score >= 5 ? 'border-t-4 border-t-amber-500' : 'border-t-4 border-t-rose-500'}`}>
+                            {/* Header điểm */}
+                            <div className={`bg-gradient-to-br p-6 lg:p-8 relative overflow-hidden ${result.score >= 8 ? 'from-emerald-500 via-emerald-600 to-teal-700' : result.score >= 5 ? 'from-amber-500 via-amber-600 to-orange-700' : 'from-rose-500 via-rose-600 to-red-700'}`}>
+                                {/* Decorative circles */}
+                                <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-white/10"></div>
+                                <div className="absolute -bottom-16 -left-10 w-52 h-52 rounded-full bg-black/10"></div>
+                                
+                                <div className="relative flex flex-col lg:flex-row lg:items-center gap-6">
+                                    <div className="flex-1 text-white">
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <span className="bg-white/20 backdrop-blur px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+                                                <Icon name={result.already_submitted ? 'circle-check' : 'trophy'} className="mr-1" />
+                                                Bạn đã hoàn thành bài tập
+                                            </span>
+                                        </div>
+                                        <h3 className="text-2xl lg:text-3xl font-bold tracking-tight drop-shadow-md">
+                                            KẾT QUẢ CHẤM ĐIỂM TỰ ĐỘNG
+                                        </h3>
+                                        <p className="text-white/80 text-sm mt-2 flex items-center gap-2">
+                                            <Icon name="file-lines" /> Mã đề: <span className="font-mono font-bold">{a ? a.examCode : '—'}</span>
+                                            {a && <span className="ml-2 font-mono">ϕ{a.D} {hole.sym}{hole.it}/{shaft.sym}{shaft.it}</span>}
+                                        </p>
+                                    </div>
+
+                                    {/* Điểm số lớn */}
+                                    <div className="flex items-center gap-5">
+                                        <div className="bg-white/20 backdrop-blur-md rounded-2xl px-8 py-5 text-center shadow-xl border border-white/20">
+                                            <div className="text-5xl lg:text-6xl font-bold text-white drop-shadow-md font-mono">{result.score}</div>
+                                            <div className="text-white/90 text-sm font-semibold tracking-wider mt-1">/ 10.0 ĐIỂM</div>
+                                        </div>
+                                        <div className="text-center text-white">
+                                            <div className="w-16 h-16 mx-auto rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center text-3xl mb-1">
+                                                <Icon name={result.score >= 8 ? 'face-smile' : result.score >= 5 ? 'face-meh' : 'face-frown'} />
+                                            </div>
+                                            <div className="text-xs font-semibold uppercase tracking-wider text-white/85">
+                                                {result.score >= 8 ? 'Xuất sắc!' : result.score >= 5 ? 'Đạt yêu cầu' : 'Cần cố gắng'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Bảng đối chiếu Đáp án của bạn | Đáp án đúng | Kết quả */}
+                            <div className="p-6 lg:p-8 bg-white dark:bg-slate-800/80">
+                                <h4 className="font-bold text-lg text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                    <Icon name="table-list" className="text-primary-500" /> Đối Chiếu Chi Tiết Từng Thông Số
+                                </h4>
+
+                                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-left">
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">Thông số</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold text-center">Đáp án của bạn</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold text-center">Đáp án đúng</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold text-center">Kết quả</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold text-center">Điểm</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {(result.details || []).map((item, idx) => (
+                                                <tr key={item.key} className={`border-b border-slate-100 dark:border-slate-800 ${item.is_correct ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : 'bg-rose-50/50 dark:bg-rose-950/20'}`}>
+                                                    <td className="p-3.5 font-medium text-slate-800 dark:text-slate-200">
+                                                        <span className="font-mono font-bold">{item.key}</span>
+                                                        <span className="text-xs text-slate-500 dark:text-slate-400 ml-2 hidden md:inline">{item.label}</span>
+                                                    </td>
+                                                    <td className="p-3.5 text-center font-mono font-bold text-slate-800 dark:text-white">
+                                                        {Number(item.student) > 0 ? `+${item.student}` : item.student} µm
+                                                    </td>
+                                                    <td className="p-3.5 text-center font-mono font-bold text-slate-800 dark:text-white">
+                                                        {Number(item.correct) > 0 ? `+${item.correct}` : item.correct} µm
+                                                    </td>
+                                                    <td className="p-3.5 text-center">
+                                                        {item.is_correct ? (
+                                                            <span className="inline-flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full font-bold text-xs border border-emerald-300 dark:border-emerald-800">
+                                                                <Icon name="check" /> Đúng
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1.5 bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 px-3 py-1 rounded-full font-bold text-xs border border-rose-300 dark:border-rose-800">
+                                                                <Icon name="xmark" /> Sai
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                                                        {item.is_correct ? '2.5' : '0.0'}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-slate-100 dark:bg-slate-900 font-bold text-slate-900 dark:text-white">
+                                                <td colSpan="4" className="p-4 text-right uppercase tracking-wider text-sm">Tổng điểm:</td>
+                                                <td className="p-4 text-center font-mono text-lg text-emerald-600 dark:text-emerald-400">{result.score} / 10.0</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+
+                                {/* Đề bài + Đáp án đúng tham khảo */}
+                                {hole && shaft && (
+                                    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="bg-gradient-to-br from-sky-50 to-blue-50 dark:from-sky-950/30 dark:to-blue-950/15 border border-sky-200 dark:border-sky-800/50 rounded-xl p-4">
+                                            <div className="font-bold text-sm text-hole-text mb-2"><Icon name="circle-dot" className="mr-1" /> Lỗ ϕ{a.D} {hole.sym}{hole.it}</div>
+                                            <div className="font-mono text-xs text-slate-600 dark:text-slate-300 space-y-1">
+                                                <div>ES = {hole.ES > 0 ? `+${hole.ES}` : hole.ES} µm · EI = {hole.EI} µm</div>
+                                                <div>Dmax = {hole.Dmax.toFixed(3)} mm · Dmin = {hole.Dmin.toFixed(3)} mm</div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-950/30 dark:to-amber-950/15 border border-orange-200 dark:border-orange-800/50 rounded-xl p-4">
+                                            <div className="font-bold text-sm text-shaft-text mb-2"><Icon name="circle" className="mr-1" /> Trục ϕ{a.D} {shaft.sym}{shaft.it}</div>
+                                            <div className="font-mono text-xs text-slate-600 dark:text-slate-300 space-y-1">
+                                                <div>es = {shaft.es > 0 ? `+${shaft.es}` : shaft.es} µm · ei = {shaft.ei > 0 ? `+${shaft.ei}` : shaft.ei} µm</div>
+                                                <div>dmax = {shaft.dmax.toFixed(3)} mm · dmin = {shaft.dmin.toFixed(3)} mm</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                                        <Icon name="circle-info" className="text-primary-500" />
+                                        Bài tập đã hoàn thành. Bạn không thể nộp lại lần hai.
+                                    </p>
+                                    <button
+                                        onClick={() => window.print()}
+                                        className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm shrink-0"
+                                    >
+                                        <Icon name="print" /> In kết quả
+                                    </button>
+                                </div>
+                            </div>
+                        </Card>
+                    )}
+                </div>
+            );
+        };
+
         // ===================================================================
         // LOGIN SCREEN - Màn hình đăng nhập (JWT + RBAC)
         // ===================================================================
@@ -2470,11 +3202,18 @@
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'library' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
                                 <Icon name="book-bookmark" className="w-4 text-center" /> Thư Viện ISO 286
                             </button>
-                            {!isStudent && (
+{!isStudent && (
                             <button 
                                 onClick={() => setActiveMenu('generate')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'generate' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
                                 <Icon name="file-circle-check" className="w-4 text-center" /> Tạo Đề Tự Động
+                            </button>
+                            )}
+                            {isStudent && (
+                            <button 
+                                onClick={() => setActiveMenu('assignment')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'assignment' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
+                                <Icon name="pen-to-square" className="w-4 text-center" /> Bài Tập Của Tôi
                             </button>
                             )}
                             <button 
@@ -2496,7 +3235,7 @@
                                     <Icon name="bars" />
                                 </div>
 <h1 className="text-lg lg:text-xl font-bold tracking-tight text-slate-800 dark:text-white">
-                                    {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : activeMenu === 'history' ? 'Lịch Sử Đề Thi Đã Tạo' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
+                                    {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : activeMenu === 'history' ? 'Lịch Sử Đề Thi Đã Tạo' : activeMenu === 'assignment' ? 'Bài Tập Của Tôi - Làm & Nộp Bài' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
                                 </h1>
                             </div>
                             <div className="flex items-center gap-4">
@@ -2530,8 +3269,8 @@
                             </div>
                         </header>
 
-                        <div className="p-6 lg:p-10 pb-24 print:p-0">
-                            {activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : activeMenu === 'history' ? <HistoryScreen currentUser={currentUser} /> : <GeneratorScreen />}
+<div className="p-6 lg:p-10 pb-24 print:p-0">
+{activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : activeMenu === 'history' ? (currentUser && currentUser.role === 'student' ? <StudentHistoryScreen currentUser={currentUser} /> : <HistoryScreen currentUser={currentUser} />) : activeMenu === 'assignment' ? <StudentPortal currentUser={currentUser} /> : <GeneratorScreen />}
                         </div>
                     </main>
                 </div>
