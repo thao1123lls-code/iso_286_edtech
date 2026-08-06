@@ -8,6 +8,7 @@ Bao gồm:
 """
 from typing import Dict, List, Optional, Tuple
 
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
@@ -16,7 +17,10 @@ from app.db.models import (
     IsoFitLibrary,
     IsoItGrade,
     IsoSizeRange,
+    User,
 )
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ---------------------------------------------------------------------------
 # 1. KHOẢNG KÍCH THƯỚC DANH NGHĨA (13 khoảng, cận dưới mở - cận trên đóng)
@@ -210,6 +214,76 @@ def seed_if_empty(db: Optional[Session] = None) -> bool:
     finally:
         if db is None:
             s.close()
+
+
+# ---------------------------------------------------------------------------
+# 5. SEED TÀI KHOẢN NGƯỜI DÙNG MẪU (3 GV + 20 SV)
+#    Tự động chạy khi DB trống (lifespan ở main.py)
+# ---------------------------------------------------------------------------
+LECTURER_SEED = [
+    {"username": "gv01", "full_name": "TS. Nguyễn Văn Giảng", "department": "Khoa Cơ khí - Bộ môn Kỹ thuật Cơ khí"},
+    {"username": "gv02", "full_name": "ThS. Trần Thị Dạy", "department": "Khoa Cơ khí - Bộ môn Cơ khí Chế tạo"},
+    {"username": "gv03", "full_name": "PGS.TS. Lê Thị Học", "department": "Khoa Cơ khí - Bộ môn Cơ khí Chế tạo"},
+]
+
+_STUDENT_FIRST_NAMES = [
+    "Nguyễn Văn", "Trần Thị", "Lê Văn", "Phạm Thị", "Vũ Văn",
+    "Hoàng Thị", "Đỗ Văn", "Đặng Thị", "Bùi Văn", "Ngô Thị",
+    "Dương Văn", "Lý Thị", "Hồ Văn", "Tô Thị", "Mai Văn",
+    "Đinh Thị", "Trịnh Văn", "Phan Thị", "Võ Văn", "Đào Thị",
+]
+_STUDENT_LAST_NAMES = [
+    "An", "Bình", "Cường", "Dung", "Em", "Phúc", "Hà", "Hùng",
+    "Linh", "Minh", "Nhung", "Oanh", "Phương", "Quân", "Sơn",
+    "Tâm", "Uyên", "Vy", "Xuân", "Yến",
+]
+_CLASSES = ["21CK1", "21CK2", "21CK3", "21CK4", "22CK1"]
+
+
+def seed_users_if_empty(db: Optional[Session] = None) -> int:
+    """Tạo tài khoản mẫu nếu bảng `users` chưa có dữ liệu (idempotent).
+
+    - 3 Giảng viên (gv01, gv02, gv03; role='lecturer')
+    - 20 Sinh viên (MSSV 2110481..2110500; role='student')
+    Mật khẩu mặc định: '123' (hash bcrypt).
+    Trả về số tài khoản đã tạo.
+    """
+    s: Session = db if db is not None else SessionLocal()
+    created = 0
+    try:
+        if s.query(User).first() is not None:
+            return 0  # Đã có user -> không seed lại.
+
+        # 3 Giảng viên
+        for gv in LECTURER_SEED:
+            s.add(User(
+                username=gv["username"],
+                full_name=gv["full_name"],
+                role="lecturer",
+                department=gv["department"],
+                password_hash=_pwd_context.hash("123"),
+            ))
+            created += 1
+
+        # 20 Sinh viên (MSSV 2110481..2110500)
+        for i in range(20):
+            start_mssv = 2110481
+            mssv = str(start_mssv + i)
+            full_name = f"{_STUDENT_FIRST_NAMES[i]} {_STUDENT_LAST_NAMES[i]}"
+            s.add(User(
+                username=mssv,
+                full_name=full_name,
+                role="student",
+                department=_CLASSES[i % len(_CLASSES)],
+                password_hash=_pwd_context.hash("123"),
+            ))
+            created += 1
+
+        s.commit()
+    finally:
+        if db is None:
+            s.close()
+    return created
 
 
 if __name__ == "__main__":

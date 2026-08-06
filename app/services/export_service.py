@@ -25,17 +25,25 @@ class ExportService:
         return warnings
 
     @staticmethod
-    def export_docx(data: ExamData) -> Tuple[bytes, str, str]:
-        """Xuất Word (.docx). Trả về (bytes, media_type, filename)."""
+    def export_docx(data: ExamData, include_answers: bool = True) -> Tuple[bytes, str, str]:
+        """Xuất Word (.docx). Trả về (bytes, media_type, filename).
+
+        include_answers=False -> file chỉ có Header chuẩn + ĐỀ BÀI + YÊU CẦU
+        (bỏ phần ĐÁP ÁN & BAREM để dùng làm đề thi thật).
+        """
         validate_exam_data(data)  # raise nếu vi phạm ràng buộc nghiệp vụ
-        bio = docx_service.build_docx_bytes(data)
+        bio = docx_service.build_docx_bytes(data, include_answers=include_answers)
         return bio.getvalue(), MEDIA_TYPE_DOCX, docx_service.filename_docx(data)
 
     @staticmethod
-    def export_pdf(data: ExamData) -> Tuple[bytes, str, str]:
-        """Xuất PDF thực (ReportLab). Trả về (bytes, media_type, filename)."""
+    def export_pdf(data: ExamData, include_answers: bool = True) -> Tuple[bytes, str, str]:
+        """Xuất PDF thực (ReportLab). Trả về (bytes, media_type, filename).
+
+        include_answers=False -> file chỉ có Header chuẩn + ĐỀ BÀI + YÊU CẦU
+        (bỏ phần ĐÁP ÁN & BAREM để dùng làm đề thi thật).
+        """
         validate_exam_data(data)  # raise nếu vi phạm ràng buộc nghiệp vụ
-        bio = pdf_service.build_pdf_bytes(data)
+        bio = pdf_service.build_pdf_bytes(data, include_answers=include_answers)
         return bio.getvalue(), MEDIA_TYPE_PDF, pdf_service.filename_pdf(data)
 
 
@@ -48,4 +56,3 @@ __all__ = [
     "ToleranceValidationError",
     "validate_exam_data",
 ]
-

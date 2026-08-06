@@ -1,19 +1,14 @@
 """Xuất Header đề thi chuẩn Trường ĐH Công nghệ Đồng Nai (DNTU) ra PDF.
 
-Hàm chính:
-    generate_pdf_exam_header(canvas, doc)
+Hàm chính (Story-friendly):
+    build_exam_header(ma_de, ma_lo_dot) -> list[Flowable]  (5 phần Form DNTU)
 
-Đây là hàm dạng **page decorator** (nhận canvas + doc) đúng như yêu cầu, nhưng
-bên trong vẫn dựa trên ReportLab platypus (Table, Paragraph, Spacer) để xây dựng
-cấu trúc 5 phần chính, sau đó "Wrap + Draw" các Flowable trực tiếp lên canvas
-tại vị trí đầu trang.
-
-Bố cục 5 phần:
-    1. Bảng thông tin phê duyệt      (1 dòng x 2 cột)
+Cấu trúc 5 phần:
+    1. Bảng thông tin phê duyệt      (1 dòng x 2 cột, không viền ngoài)
     2. Dòng text phân cách            (in nghiêng, căn giữa, size nhỏ)
-    3. Bảng Header Đề Thi             (bảng phức tạp dùng SPAN cell)
-    4. Bảng Điểm số & Chữ ký          (2 dòng x 4 cột)
-    5. Ô GHI CHÚ & QUY ĐỊNH THI       (bullet points)
+    3. Bảng Header Đề Thi             (bảng phức tạp dùng SPAN cell, Mã đề đỏ)
+    4. Bảng thông tin Thí sinh        (BOX + Nested Table MSSV 7 ô vuông, Mã lô đỏ)
+    5. Bảng Điểm số & Chữ ký + Khung GHI CHÚ & QUY ĐỊNH THI (bullet points)
 
 Font sử dụng: Times New Roman (đã đăng ký trong app/core/pdf_fonts.py).
 """
@@ -53,8 +48,8 @@ DURATION       = "60 phút"
 SEMESTER       = "1"
 ACADEMIC_YEAR  = "2026-2027"
 EXAM_DAY       = "25/8/2026"
-EXAM_CODE      = "101"          # Mã đề thi (màu đỏ)
-LOT_CODE       = "LD-2026-A1"   # Mã lô/đợt đề (màu đỏ)
+EXAM_CODE      = "101"          # Mã đề thi mặc định (màu đỏ)
+LOT_CODE       = "LD-2026-A1"   # Mã lô/đợt đề mặc định (màu đỏ)
 
 LECTURER_NAME   = "THÂN TRỌNG KHÁNH ĐẠT"
 APPROVER_TITLE  = "Trưởng bộ môn"
@@ -98,279 +93,23 @@ def _cell(text, name="cell", fontName=PDF_FONT, size=10, leading=13,
 
 
 # ---------------------------------------------------------------------------
-# Helper: Wrap + Draw một Flowable lên canvas, trả về vị trí y mới (đỉnh trên)
+# HÀM CHÍNH: build_exam_header(ma_de, ma_lo_dot)
 # ---------------------------------------------------------------------------
-def _push(canvas, fl, x, y, width, gap=0.15 * cm):
-    """Đặt flowable sao cho đỉnh trên của nó nằm tại (x, y), trả về y mới."""
-    w, h = fl.wrapOn(canvas, width, 1200)
-    fl.drawOn(canvas, x, y - h)
-    return y - h - gap
-
-
-# ---------------------------------------------------------------------------
-# HÀM CHÍNH
-# ---------------------------------------------------------------------------
-def generate_pdf_exam_header(canvas, doc):
-    """Xuất Header đề thi (5 phần) vào đầu trang thứ nhất của PDF.
-
-    Canvas: đối tượng canvas của ReportLab (thường được truyền từ
-    SimpleDocTemplate.build(..., onFirstPage=generate_pdf_exam_header)).
-    """
-    canvas.saveState()
-    x = PDF_MARGIN_LEFT
-    top = PAGE_SIZE[1] - PDF_MARGIN_TOP
-    y = top
-
-    # =====================================================================
-    # PHẦN 1: BẢNG THÔNG TIN PHÊ DUYỆT (1 dòng x 2 cột)
-    # =====================================================================
-    style_left = _st("approval_label", size=10, leading=13, align=TA_LEFT)
-    style_name = _st("approval_name", fontName=PDF_FONT_B, size=10.5,
-                     leading=14, align=TA_LEFT)
-
-    left_para = Paragraph(
-        f"Giảng viên ra đề: {ISSUE_DATE} (Ngày ra đề)<br/>"
-        f'<font color="#999999"><i>(Nhấp để tải chữ ký)</i></font><br/>'
-        f".................. <br/>"
-        f"<b>{LECTURER_NAME}</b>",
-        style_left,
-    )
-    right_para = Paragraph(
-        f"Người phê duyệt: {APPROVE_DATE} (Ngày duyệt)<br/>"
-        f'<font color="#999999"><i>(Nhấp để tải chữ ký)</i></font><br/>'
-        f".................. <br/>"
-        f"<b>{APPROVER_TITLE}</b><br/>"
-        f"<b>{APPROVER_NAME}</b>",
-        style_left,
-    )
-
-    tbl1 = Table([[left_para, right_para]],
-                 colWidths=[CONTENT_W / 2.0, CONTENT_W / 2.0])
-    tbl1.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    y = _push(canvas, tbl1, x, y, CONTENT_W)
-
-    # =====================================================================
-    # PHẦN 2: DÒNG TEXT PHÂN CÁCH (in nghiêng, căn giữa, size nhỏ)
-    # =====================================================================
-    sep = Paragraph(
-        '<font color="#999999"><i>(Phần phía trên cần che đi khi in sao đề thi)</i></font>',
-        _st("sep", size=9, leading=11, align=TA_CENTER),
-    )
-    y = _push(canvas, sep, x, y, CONTENT_W, gap=0.1 * cm)
-
-    # =====================================================================
-    # PHẦN 3: BẢNG HEADER ĐỀ THI (bảng phức tạp dùng SPAN) - lưới 4x6
-    # =====================================================================
-    # Cột: 0 | 1 | 2 | 3 | 4 | 5
-    # +-----+-----+-----+----------+----------+
-    # |LOGO | BÀI KIỂM TRA 01 (sp) | HK/năm   |
-    # |(sp) | (sp 2x2)             | Ngày thi |
-    # |     +-----+-----+----------+----------+
-    # |4row | Mã  | val | Môn học  | CHI TIẾT |
-    # |     | mt  |     |          | MÁY (sp) |
-    # |     +-----+-----+----------+----------+
-    # |     | Thời| val | Mã đề thi| 101 (đỏ)|
-    # +-----+-----+-----+----------+----------+
-    logo_para = Paragraph(
-        f'<font color="#999999" size="8"><i>[LOGO]</i></font><br/>'
-        f"<b>{DNTU_SCHOOL}</b><br/>"
-        f"<b>{DNTU_FACULTY}</b><br/>"
-        f"{DNTU_DEPT}",
-        _st("logo", size=9.5, leading=12, align=TA_CENTER),
-    )
-    title_para = Paragraph(
-        f"<b>{EXAM_TITLE}</b>",
-        _st("title", fontName=PDF_FONT_B, size=16, leading=20, align=TA_CENTER),
-    )
-
-    data2 = [
-        [logo_para, title_para, "", "Học kỳ/năm học", "1", "2026-2027"],
-        ["", "", "", "Ngày thi", "25/8/2026", ""],
-        ["", "Mã môn học", SUBJECT_CODE, "Môn học", SUBJECT_NAME, ""],
-        ["", "Thời lượng", DURATION, "Mã đề thi", EXAM_CODE, ""],
-    ]
-    tbl2 = Table(data2, colWidths=[3.2 * cm, 2.6 * cm, 2.6 * cm,
-                                   2.9 * cm, 2.6 * cm, 2.6 * cm])
-    tbl2.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        # Logo trái trải 4 hàng
-        ("SPAN", (0, 0), (0, 3)),
-        # Tiêu đề giữa trải 2 hàng x 2 cột
-        ("SPAN", (1, 0), (2, 1)),
-        # Bên phải: Ngày thi / Môn học / Mã đề thi nối 2 cột
-        ("SPAN", (4, 1), (5, 1)),
-        ("SPAN", (4, 2), (5, 2)),
-        ("SPAN", (4, 3), (5, 3)),
-        # Dòng chữ mờ mờ (LOGO) ở ô trái
-        ("FONTNAME", (0, 0), (0, 3), PDF_FONT),
-        # Mã đề thi: màu đỏ, đậm
-        ("TEXTCOLOR", (4, 3), (5, 3), RED),
-        ("FONTNAME", (4, 3), (5, 3), PDF_FONT_B),
-        # Padding nhỏ cho gọn
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]))
-    y = _push(canvas, tbl2, x, y, CONTENT_W)
-
-    # =====================================================================
-    # PHẦN 4: BẢNG THÔNG TIN THÍ SINH (có Nested Table cho MSSV)
-    # =====================================================================
-    style_stu = _st("stu", size=10, leading=13, align=TA_LEFT)
-    style_stu_c = _st("stu_c", size=10, leading=13, align=TA_CENTER)
-
-    # Dòng 1: Họ và tên + MSSV (nested table 7 ô vuông)
-    name_para = Paragraph(
-        "Họ và tên thí sinh: " + " " * 2 + "................................",
-        style_stu,
-    )
-    # Nested table 7 ô vuông nối liền nhau
-    mssv_boxes = Table(
-        [["", "", "", "", "", "", ""]],
-        colWidths=[0.5 * cm] * 7,
-        rowHeights=[0.5 * cm],
-    )
-    mssv_boxes.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.5, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    mssv_cell = Table(
-        [[Paragraph("MSSV:", _st("mssv", size=10, align=TA_LEFT)), mssv_boxes]],
-        colWidths=[1.3 * cm, 7.0 * cm],
-    )
-    mssv_cell.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-
-    # Dòng 2: Lớp/Nhóm, STT phòng, Phòng thi, Mã lô/đợt đề
-    lot_para = Paragraph(
-        f'Mã lô/đợt đề: <font color="#C00000"><b>{LOT_CODE}</b></font>',
-        style_stu_c,
-    )
-
-    # Dòng 3: Ghi chú + chữ ký thí sinh
-    note_para = Paragraph(
-        '<i>Thí sinh ký và ghi rõ họ tên, MSSV trước khi bắt đầu làm bài.</i>',
-        _st("note", size=9, align=TA_LEFT),
-    )
-    sign_para = Paragraph(
-        "Chữ ký thí sinh: ____________________",
-        _st("sign", size=10, align=TA_RIGHT),
-    )
-
-    data3 = [
-        [Paragraph("PHẦN DÀNH CHO THÍ SINH ĐIỀN THÔNG TIN",
-                   _st("stu_title", fontName=PDF_FONT_B, size=11,
-                       leading=14, align=TA_CENTER)),
-         "", "", ""],
-        [name_para, "", mssv_cell, ""],
-        ["Lớp/Nhóm:", "STT phòng:", "Phòng thi:", lot_para],
-        [note_para, "", "", sign_para],
-    ]
-    tbl3 = Table(data3, colWidths=[4.5 * cm, 3.5 * cm, 3.0 * cm, 5.5 * cm])
-    tbl3.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 1), (0, 1), "LEFT"),
-        # Tiêu đề trải 4 cột
-        ("SPAN", (0, 0), (3, 0)),
-        # Họ tên trải cột 0-1
-        ("SPAN", (0, 1), (1, 1)),
-        #MSSV trải cột 2-3
-        ("SPAN", (2, 1), (3, 1)),
-        # Ghi chú trải cột 0-2
-        ("SPAN", (0, 3), (2, 3)),
-        # Căn giữa các ô dòng 2
-        ("ALIGN", (0, 2), (3, 2), "CENTER"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    y = _push(canvas, tbl3, x, y, CONTENT_W)
-
-    # =====================================================================
-    # PHẦN 5A: BẢNG ĐIỂM SỐ & CHỮ KÝ (2 dòng x 4 cột)
-    # =====================================================================
-    score_headers = [
-        "Điểm số bằng số", "Điểm số bằng chữ",
-        "Chữ ký CB chấm thi 1", "Chữ ký CB chấm thi 2",
-    ]
-    data4 = [
-        [Paragraph(f"<b>{h}</b>", _st("score_h", fontName=PDF_FONT_B, size=10,
-                                      align=TA_CENTER)) for h in score_headers],
-        [Paragraph("", _st("score_v", size=10)) for _ in score_headers],
-    ]
-    tbl4 = Table(data4, colWidths=[CONTENT_W / 4.0] * 4)
-    tbl4.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    y = _push(canvas, tbl4, x, y, CONTENT_W)
-
-    # =====================================================================
-    # PHẦN 5B: GHI CHÚ & QUY ĐỊNH THI (ô viền to, bullet points)
-    # =====================================================================
-    notes_text = (
-        "<b>GHI CHÚ &amp; QUY ĐỊNH THI:</b><br/>"
-        "&nbsp;&nbsp;• Được sử dụng tài liệu giấy (Không sử dụng thiết bị điện tử).<br/>"
-        "&nbsp;&nbsp;• Được sử dụng bút chì để vẽ hình và lập sơ đồ.<br/>"
-        "&nbsp;&nbsp;• Thí sinh nộp lại toàn bộ đề thi cùng bài làm khi hết giờ làm bài."
-    )
-    note_box = Paragraph(
-        notes_text,
-        _st("note_box", size=10, leading=14, align=TA_LEFT),
-    )
-    tbl5 = Table([[note_box]], colWidths=[CONTENT_W])
-    tbl5.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    y = _push(canvas, tbl5, x, y, CONTENT_W)
-
-    canvas.restoreState()
-
-
-# ---------------------------------------------------------------------------
-# HÀM ĐỘC LẬP: build_dntu_exam_header()
-# ---------------------------------------------------------------------------
-def build_pdf_header():
+def build_exam_header(ma_de, ma_lo_dot):
     """Trả về list Flowable (5 phần) - Form Header chuẩn DNTU (dành cho PDF).
 
-    Đây là hàm dạng **Story-friendly**: chỉ cần `story += build_pdf_header()`.
+    Đây là hàm dạng **Story-friendly**: chỉ cần `story += build_exam_header(...)`.
 
-    Toàn bộ TableStyle & ParagraphStyle LUÔN dùng font TimesNewRoman (PDF_FONT)
-    để khắc phục triệt để lỗi ô vuông đen (■) khi xuất tiếng Việt có dấu
-    (KHÔNG dùng Helvetica).
+    Tham số:
+        ma_de      : str -> Mã đề thi   (hiển thị màu ĐỎ ở Phần 3).
+        ma_lo_dot  : str -> Mã lô/đợt đề (hiển thị màu ĐỎ ở Phần 4).
 
-    Cấu trúc 5 phần:
-      1. Bảng Phê duyệt      (1 dòng x 2 cột, căn giữa, không viền ngoài)
-      2. Dòng text phân cách  (in nghiêng, size 9, căn giữa)
-      3. Bảng Header Đề Thi  (4 cột x 4 hàng, GRID + SPAN, Mã đề thi màu đỏ)
-      4. Bảng Thông tin Thí sinh (BOX, Nested Table MSSV 7 ô vuông)
-      5. Bảng Điểm số & Chữ ký (Grid 2x4) + Khung GHI CHÚ & QUY ĐỊNH THI (BOX)
+    Bố cục 5 phần:
+      1. Bảng Phê duyệt        (1 dòng x 2 cột, căn giữa, không viền ngoài)
+      2. Dòng text phân cách    (in nghiêng, size 9, căn giữa)
+      3. Bảng Header Đề Thi    (4 cột x 4 hàng, GRID + SPAN, Mã đề màu đỏ)
+      4. Bảng Thông tin Thí sinh (BOX, Nested Table MSSV 7 ô vuông, Mã lô đỏ)
+      5. Bảng Điểm số & Chữ ký  (Grid 2x4) + Khung GHI CHÚ & QUY ĐỊNH THI (BOX)
     """
     from app.core.pdf_fonts import register_pdf_fonts
     register_pdf_fonts()  # đảm bảo font TimesNewRoman đã được đăng ký
@@ -433,7 +172,7 @@ def build_pdf_header():
     # | LOGO / Tên trường | BÀI KIỂM TRA 01 | Học kỳ/năm   | 1/2026-2027 |
     # | (sp rows 0-3)      | (sp rows 0-1)   | Ngày thi     | 25/8/2026   |
     # |                   |                 | Mã môn học   | ME2007      |
-    # |                   |                 | Mã đề thi    | 101 (đỏ)    |
+    # |                   |                 | Mã đề thi    | <ma_de> (đỏ)|
     # +-------------------+-----------------+--------------+-------------+
     logo_para = Paragraph(
         f'<font color="#999999" size="8"><i>[LOGO]</i></font><br/>'
@@ -460,7 +199,7 @@ def build_pdf_header():
          _cell(SUBJECT_CODE, "val_subj", align=TA_CENTER)],
         ["", "",
          _cell("Mã đề thi", "lbl_examcode", align=TA_CENTER),
-         _cell(EXAM_CODE, "val_examcode",
+         _cell(ma_de, "val_examcode",
                fontName=PDF_FONT_B, color=RED, align=TA_CENTER)],
     ]
     w_left = 3.4 * cm
@@ -474,9 +213,9 @@ def build_pdf_header():
         ("GRID", (0, 0), (-1, -1), 0.6, BLACK),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        # Cột 1 (Logo/Tên trường) trải 4 hàng
+        # Cột 0 (Logo/Tên trường) trải 4 hàng
         ("SPAN", (0, 0), (0, 3)),
-        # Cột 2 (BÀI KIỂM TRA 01) trải 2 hàng
+        # Cột 1 (BÀI KIỂM TRA 01) trải 2 hàng
         ("SPAN", (1, 0), (1, 1)),
         # Mã đề thi: màu đỏ, đậm
         ("TEXTCOLOR", (3, 3), (3, 3), RED),
@@ -531,7 +270,7 @@ def build_pdf_header():
     class_para = Paragraph(
         f"Lớp/Nhóm: ...............&nbsp;&nbsp; STT phòng: ........&nbsp;&nbsp; "
         f"Phòng thi: ........&nbsp;&nbsp; "
-        f"Mã lô/đợt đề: <font color='#C00000'><b>{LOT_CODE}</b></font>",
+        f"Mã lô/đợt đề: <font color='#C00000'><b>{ma_lo_dot}</b></font>",
         st_stu_c,
     )
     # Dòng 4: Ghi chú (trái) + Chữ ký thí sinh (phải)
@@ -632,6 +371,14 @@ def build_pdf_header():
     return flowables
 
 
+# ---------------------------------------------------------------------------
+# Wrapper tương thích ngược: build_pdf_header() / build_dntu_exam_header()
+# ---------------------------------------------------------------------------
+def build_pdf_header():
+    """Wrapper: gọi build_exam_header với Mã đề & Mã lô mặc định (hằng số)."""
+    return build_exam_header(EXAM_CODE, LOT_CODE)
+
+
 # ----- Alias giữ tên cũ cho tương thích ngược -----
 build_dntu_exam_header = build_pdf_header
 
@@ -641,32 +388,11 @@ build_dntu_exam_header = build_pdf_header
 #   -> tạo _exam_header_sample.pdf
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    from reportlab.pdfbase import pdfmetrics
     from app.core.pdf_fonts import register_pdf_fonts
 
     register_pdf_fonts()
 
-    bio = io.BytesIO()
-    doc = SimpleDocTemplate(
-        bio,
-        pagesize=PAGE_SIZE,
-        rightMargin=PDF_MARGIN_RIGHT,
-        leftMargin=PDF_MARGIN_LEFT,
-        topMargin=PDF_MARGIN_TOP,
-        bottomMargin=PDF_MARGIN_BOTTOM,
-        title="Header De Thi DNTU",
-    )
-    story = [
-        Spacer(1, 1 * cm),
-        Paragraph("[Nội dung câu hỏi bắt đầu từ đây...]",
-                  _st("body", size=11, leading=15)),
-    ]
-    doc.build(story, onFirstPage=generate_pdf_exam_header)
-    with open("_exam_header_sample.pdf", "wb") as f:
-        f.write(bio.getvalue())
-    print("Đã tạo file mẫu: _exam_header_sample.pdf")
-
-    # --- Demo: build_pdf_header() (Story-friendly) ---
+    # --- Demo: build_exam_header(ma_de, ma_lo_dot) (Story-friendly) ---
     bio2 = io.BytesIO()
     doc2 = SimpleDocTemplate(
         bio2,
@@ -675,9 +401,9 @@ if __name__ == "__main__":
         leftMargin=PDF_MARGIN_LEFT,
         topMargin=PDF_MARGIN_TOP,
         bottomMargin=PDF_MARGIN_BOTTOM,
-        title="Form De Thi DNTU (build_pdf_header)",
+        title="Form De Thi DNTU (build_exam_header)",
     )
-    story2 = build_pdf_header()
+    story2 = build_exam_header("101", "LD-2026-A1")
     story2.append(Spacer(1, 0.5 * cm))
     story2.append(Paragraph("[Nội dung câu hỏi bắt đầu từ đây...]",
                             _st("body", size=11, leading=15)))

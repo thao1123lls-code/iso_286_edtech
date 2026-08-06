@@ -268,25 +268,7 @@
             }
         };
 
-// -------------------------------------------------------------------
-        // MOCK_USERS - Bộ dữ liệu mẫu cho màn hình Login (quick-fill)
-        //   - 2 Giảng viên (role: 'teacher')
-        //   - 5 Sinh viên  (role: 'student', có mssv + className)
-        // Username phải trùng với backend USERS (main.py) để đăng nhập thật.
-        // -------------------------------------------------------------------
-        const MOCK_USERS = [
-            // ---- 2 GIẢNG VIÊN ----
-            { username: "gv01", password: "123", full_name: "TS. Nguyễn Văn Giảng", role: "teacher", department: "Khoa Cơ khí · Bộ môn Kỹ thuật Cơ khí" },
-            { username: "gv02", password: "123", full_name: "ThS. Trần Thị Dạy", role: "teacher", department: "Khoa Cơ khí · Bộ môn Cơ khí Chế tạo" },
-            // ---- 5 SINH VIÊN (có mssv + className) ----
-            { username: "2110481", password: "123", full_name: "Nguyễn Văn An", role: "student", mssv: "2110481", className: "21CK1" },
-            { username: "2110482", password: "123", full_name: "Trần Thị Bình", role: "student", mssv: "2110482", className: "21CK1" },
-            { username: "2110483", password: "123", full_name: "Lê Văn Cường", role: "student", mssv: "2110483", className: "21CK2" },
-            { username: "2110484", password: "123", full_name: "Phạm Thị Dung", role: "student", mssv: "2110484", className: "21CK2" },
-            { username: "2110485", password: "123", full_name: "Vũ Văn Em", role: "student", mssv: "2110485", className: "21CK3" }
-        ];
-
-        // ---------- AUTH HELPERS (dùng chung cho toàn bộ ứng dụng) ----------
+// ---------- AUTH HELPERS (dùng chung cho toàn bộ ứng dụng) ----------
         // Token JWT lưu ở module-level; App sẽ đồng bộ khi đăng nhập / đăng xuất.
         let AUTH_TOKEN = localStorage.getItem('iso286_token') || null;
 
@@ -2893,9 +2875,18 @@ if (error && !assignment) {
         // ===================================================================
         // LOGIN SCREEN - Màn hình đăng nhập (JWT + RBAC)
         // ===================================================================
-        const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
-            const [username, setUsername] = useState('');
-            const [password, setPassword] = useState('');
+const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
+            // Tab đăng nhập: 'student' | 'lecturer'
+            const [mode, setMode] = useState('student');
+
+            // Sinh viên: MSSV + Mật khẩu
+            const [studentId, setStudentId] = useState('');
+            const [studentPassword, setStudentPassword] = useState('');
+
+            // Giảng viên: Tên đăng nhập + Mật khẩu
+            const [lecturerUser, setLecturerUser] = useState('');
+            const [lecturerPassword, setLecturerPassword] = useState('');
+
             const [showPassword, setShowPassword] = useState(false);
             const [remember, setRemember] = useState(true);
             const [loading, setLoading] = useState(false);
@@ -2903,8 +2894,13 @@ if (error && !assignment) {
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!username.trim() || !password) {
-                    setError('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
+                const username = mode === 'student' ? studentId.trim() : lecturerUser.trim();
+                const password = mode === 'student' ? studentPassword : lecturerPassword;
+
+                if (!username || !password) {
+                    setError(mode === 'student'
+                        ? 'Vui lòng nhập đầy đủ MSSV và mật khẩu.'
+                        : 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
                     return;
                 }
                 setLoading(true);
@@ -2913,7 +2909,7 @@ if (error && !assignment) {
                     const res = await fetch('http://127.0.0.1:8000/api/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: username.trim(), password })
+                        body: JSON.stringify({ username, password })
                     });
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) {
@@ -2928,10 +2924,10 @@ if (error && !assignment) {
                 }
             };
 
-            const quickFill = (user, pass) => {
-                setUsername(user);
-                setPassword(pass);
+            const switchMode = (m) => {
+                setMode(m);
                 setError('');
+                setShowPassword(false);
             };
 
             return (
@@ -2973,6 +2969,24 @@ if (error && !assignment) {
                                 </button>
                             </div>
 
+                            {/* Tabs: Sinh viên / Giảng viên */}
+                            <div className="grid grid-cols-2 gap-2 mb-6 bg-slate-100 dark:bg-slate-900/60 p-1.5 rounded-xl no-print">
+                                <button
+                                    type="button"
+                                    onClick={() => switchMode('student')}
+                                    className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 ${mode === 'student' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-primary-glow' : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-800'}`}
+                                >
+                                    <Icon name="user-graduate" /> Sinh Viên
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => switchMode('lecturer')}
+                                    className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 ${mode === 'lecturer' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-800'}`}
+                                >
+                                    <Icon name="chalkboard-user" /> Giảng Viên
+                                </button>
+                            </div>
+
                             {error && (
                                 <div className="mb-5 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 border-l-4 border-l-rose-500 text-rose-700 dark:text-rose-300 px-4 py-3 rounded-xl text-sm flex items-start gap-2.5" role="alert">
                                     <Icon name="circle-exclamation" className="mt-0.5 shrink-0" />
@@ -2981,22 +2995,41 @@ if (error && !assignment) {
                             )}
 
                             <form onSubmit={handleSubmit} className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                        Tên đăng nhập
-                                    </label>
-                                    <div className="relative">
-                                        <Icon name="user" className="absolute left-3.5 top-3.5 text-slate-400 text-sm" />
-                                        <input
-                                            type="text"
-                                            value={username}
-                                            onChange={e => setUsername(e.target.value)}
-                                            placeholder="VD: giangvien hoặc sinhvien"
-                                            autoComplete="username"
-                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-3 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-all duration-300 shadow-sm placeholder:text-slate-400"
-                                        />
+                                {mode === 'student' ? (
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                            MSSV (Mã số sinh viên)
+                                        </label>
+                                        <div className="relative">
+                                            <Icon name="id-card" className="absolute left-3.5 top-3.5 text-slate-400 text-sm" />
+                                            <input
+                                                type="text"
+                                                value={studentId}
+                                                onChange={e => setStudentId(e.target.value)}
+                                                placeholder="VD: 2110481"
+                                                autoComplete="username"
+                                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-3 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all duration-300 shadow-sm placeholder:text-slate-400"
+                                            />
+                                        </div>
                                     </div>
-                                </div>
+                                ) : (
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                            Tên đăng nhập
+                                        </label>
+                                        <div className="relative">
+                                            <Icon name="user" className="absolute left-3.5 top-3.5 text-slate-400 text-sm" />
+                                            <input
+                                                type="text"
+                                                value={lecturerUser}
+                                                onChange={e => setLecturerUser(e.target.value)}
+                                                placeholder="VD: gv01"
+                                                autoComplete="username"
+                                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-3 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-all duration-300 shadow-sm placeholder:text-slate-400"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div>
                                     <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
@@ -3006,8 +3039,10 @@ if (error && !assignment) {
                                         <Icon name="lock" className="absolute left-3.5 top-3.5 text-slate-400 text-sm" />
                                         <input
                                             type={showPassword ? 'text' : 'password'}
-                                            value={password}
-                                            onChange={e => setPassword(e.target.value)}
+                                            value={mode === 'student' ? studentPassword : lecturerPassword}
+                                            onChange={e => mode === 'student'
+                                                ? setStudentPassword(e.target.value)
+                                                : setLecturerPassword(e.target.value)}
                                             placeholder="••••••••"
                                             autoComplete="current-password"
                                             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-12 py-3 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-all duration-300 shadow-sm placeholder:text-slate-400"
@@ -3041,47 +3076,19 @@ if (error && !assignment) {
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl py-3.5 transition-all duration-300 flex items-center justify-center gap-2 shadow-soft hover:shadow-primary-glow hover:scale-[1.02] active:scale-95 tracking-wide mt-2"
+                                    className={`w-full bg-gradient-to-r disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl py-3.5 transition-all duration-300 flex items-center justify-center gap-2 shadow-soft hover:shadow-primary-glow hover:scale-[1.02] active:scale-95 tracking-wide mt-2 ${mode === 'student' ? 'from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500' : 'from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500'}`}
                                 >
                                     {loading ? <Icon name="spinner" className="fa-spin" /> : <Icon name="right-to-bracket" />}
-                                    {loading ? 'Đang đăng nhập...' : 'ĐĂNG NHẬP'}
+                                    {loading
+                                        ? 'Đang đăng nhập...'
+                                        : mode === 'student' ? 'ĐĂNG NHẬP SINH VIÊN' : 'ĐĂNG NHẬP GIẢNG VIÊN'}
                                 </button>
                             </form>
 
-                            {/* Quick-fill demo accounts */}
                             <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-700">
-                                <div className="text-[11px] uppercase tracking-widest font-bold text-slate-400 mb-3 text-center">
-                                    Tài khoản dùng thử (mật khẩu: 123)
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {MOCK_USERS.map((user, idx) => {
-                                        const isTeacher = user.role === 'teacher';
-                                        const subLabel = isTeacher
-                                            ? `${user.username} · Giảng viên`
-                                            : `${user.mssv} · ${user.className}`;
-                                        return (
-                                            <button
-                                                key={user.username}
-                                                type="button"
-                                                onClick={() => quickFill(user.username, user.password)}
-                                                className={`group px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 transition-all duration-300 text-left ${isTeacher ? 'hover:border-primary-400 hover:bg-primary-50/50 dark:hover:bg-primary-950/20' : 'hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20'}`}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`w-7 h-7 rounded-lg bg-gradient-to-br text-white flex items-center justify-center text-xs shrink-0 ${isTeacher ? 'from-primary-500 to-indigo-600' : 'from-emerald-500 to-teal-600'}`}>
-                                                        <Icon name={isTeacher ? 'chalkboard-user' : 'user-graduate'} />
-                                                    </div>
-                                                    <div className="min-w-0">
-                                                        <div className="text-xs font-bold text-slate-800 dark:text-white truncate">{user.full_name}</div>
-                                                        <div className="text-[10px] font-mono text-slate-500 truncate">{subLabel}</div>
-                                                    </div>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-3 text-center leading-relaxed">
-                                    Sinh viên không nhìn thấy tab "Tạo Đề Tự Động"<br />
-                                    và không thể gọi API xuất Word/PDF.
+                                <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center leading-relaxed">
+                                    Sinh viên không nhìn thấy tab "Tạo Đề Tự Động" và không thể gọi API xuất Word/PDF.<br />
+                                    Chỉ Giảng viên được phép tạo đề, xuất file và quản lý sinh viên.
                                 </p>
                             </div>
                         </div>

@@ -39,6 +39,18 @@ API_PREFIX = "/api"
 API_TITLE = "ISO 286 Exporter API"
 
 # ---------------------------------------------------------------------------
+# OPENROUTER AI OCR (Chấm bài tự động bằng Vision Model)
+# ---------------------------------------------------------------------------
+# OpenRouter tương thích chuẩn OpenAI -> dùng thư viện `openai` với base_url riêng.
+# ⚠️ API key CHỈ đọc từ biến môi trường OPENROUTER_API_KEY — KHÔNG hardcode trong code.
+#    Đặt trước khi chạy:  set OPENROUTER_API_KEY=sk-or-...  (Windows CMD)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+# Base URL dạng client (bỏ hậu tố /v1/chat/completions — SDK tự nối).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Model Vision miễn phí trên OpenRouter.
+OPENROUTER_VISION_MODEL = "google/gemini-1.5-flash"
+
+# ---------------------------------------------------------------------------
 # CƠ SỞ DỮ LIỆU (SQLAlchemy)
 # ---------------------------------------------------------------------------
 # Mặc định SQLite (file iso286.db) để chạy ngay không cần cài DB server.

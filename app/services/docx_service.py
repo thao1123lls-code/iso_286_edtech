@@ -229,16 +229,11 @@ def _add_rubric_docx(doc: Document, active_tasks: List[Task]):
             c.width = widths[j]
 
 
-def _add_question_docx(doc: Document, q: Question, idx: int, active_tasks: List[Task]):
-    doc.add_heading(f"MÃ ĐỀ: #{idx + 1} - {q.examCode}", level=2)
-
-    p = doc.add_paragraph()
-    r = p.add_run(f"Họ & Tên: {q.student.name}")
-    r.bold = True
-    doc.add_paragraph(
-        f"MSSV: {q.student.mssv} | Lớp: {q.student.className} | "
-        f"Mã lớp: {q.student.classCode} | Mức độ: {q.diffLabel}"
-    )
+def _add_question_docx(doc: Document, q: Question, active_tasks: List[Task], include_answers: bool = True):
+    # -----------------------------------------------------------------
+    # Header chuẩn DNTU (5 phần) đã chèn bởi build_docx_header() ở build_docx_bytes.
+    # TUYỆT ĐỐI KHÔNG in lại text thô "MÃ ĐỀ / Họ & Tên / MSSV" cũ nữa.
+    # -----------------------------------------------------------------
 
     doc.add_heading("I. ĐỀ BÀI", level=3)
     p = doc.add_paragraph()
@@ -250,6 +245,12 @@ def _add_question_docx(doc: Document, q: Question, idx: int, active_tasks: List[
     doc.add_heading("II. YÊU CẦU THỰC HIỆN", level=3)
     for task in active_tasks:
         doc.add_paragraph(task.name, style="List Bullet")
+
+    # =================================================================
+    # PHẦN ĐÁP ÁN & BAREM - CHỈ render khi include_answers == True
+    # =================================================================
+    if not include_answers:
+        return
 
     doc.add_heading("III. ĐÁP ÁN & BÀI GIẢI CHI TIẾT", level=3)
 
@@ -297,20 +298,29 @@ def _add_question_docx(doc: Document, q: Question, idx: int, active_tasks: List[
     _add_rubric_docx(doc, active_tasks)
 
 
-def build_docx_bytes(data: ExamData) -> io.BytesIO:
-    """Tạo tài liệu Word (.docx) từ ExamData và trả về BytesIO."""
+def build_docx_bytes(data: ExamData, include_answers: bool = True) -> io.BytesIO:
+    """Tạo tài liệu Word (.docx) từ ExamData và trả về BytesIO.
+
+    include_answers=True  : render đầy đủ (câu hỏi + ĐÁP ÁN + BAREM).
+include_answers=False : chỉ render Header chuẩn + I. ĐỀ BÀI + II. YÊU CẦU.
+    """
     doc = Document()
     _setup_docx(doc)
-    # =====================================================================
-    # FORM HEADER CHUẨN DNTU (5 phần) - chèn ngay đầu file
-    # =====================================================================
     from app.services.docx_exam_header import build_docx_header
-    build_docx_header(doc)
     _add_cover_page_docx(doc, data.stats, data.stats.get("total", 0))
+
+    batch = data.stats.get("batchCode", "N/A")
+
     for idx, q in enumerate(data.questions):
         if idx > 0:
             doc.add_page_break()
-        _add_question_docx(doc, q, idx, data.activeTasks)
+        # -----------------------------------------------------------------
+        # Mã đề duy nhất cho mỗi bài (101, 102, 103...) -> gắn vào Header
+        # TUYỆT ĐỐI KHÔNG in lại text thô "MÃ ĐỀ / Họ & Tên / MSSV" cũ nữa.
+        # -----------------------------------------------------------------
+        ma_de = str(idx + 101)
+        build_docx_header(doc, ma_de=ma_de, ma_lo_dot=batch)
+        _add_question_docx(doc, q, data.activeTasks, include_answers=include_answers)
 
     bio = io.BytesIO()
     doc.save(bio)

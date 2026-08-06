@@ -11,15 +11,20 @@ Kiến trúc 3 lớp (Layered Architecture):
 
 ==> Chạy:  uvicorn main:app --reload
 """
+import base64
+import csv
+import io
 import json
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from openai import OpenAI
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, Integer, String, Text
@@ -27,11 +32,18 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.export import router as export_router
 from app.api.routes.iso import router as iso_router
-from app.core.config import API_TITLE
+from app.core.config import (
+    API_TITLE,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_VISION_MODEL,
+)
 from app.core.pdf_fonts import register_pdf_fonts
 from app.db import seed as iso_seed
 from app.db.database import Base, engine, get_db
 from app.db import models as iso_models  # noqa: F401 (đảm bảo ORM models được đăng ký)
+from app.db.models import User
+from app.db.seed import seed_users_if_empty as seed_users
 
 
 # ===========================================================================
@@ -47,18 +59,21 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 8 * 60  # 8 giờ (1 buổi thi / học)
 # ===========================================================================
 # MOCK DATABASE - TÀI KHOẢN NGƯỜI DÙNG
 # ===========================================================================
-# Mật khẩu được băm bằng bcrypt trước khi lưu vào "CSDL".
-# Danh sách tài khoản gồm:
-#   - giangvien, gv01, gv02 / 123  -> role: lecturer (toàn quyền, được xuất Word/PDF)
-#   - sinhvien, 2110481..2110485 / 123 -> role: student (chỉ tra cứu / học tập)
-# (username 211048x trùng MSSV Sinh viên — đồng bộ với MOCK_USERS ở index.html)
+# ⚠️ Từ phiên bản này, toàn bộ tài khoản demo (giảng viên & sinh viên) KHÔNG còn
+# được khai báo dạng dict trong bộ nhớ (in-memory) nữa.
+#
+# Mock data CHỈ chạy ngầm lúc STARTUP: `seed_users()` (app/db/seed.py) tự động
+# tạo 3 GV (gv01..gv03) + 20 SV (2110481..2110500, mật khẩu '123') nếu bảng
+# `users` rỗng. Auth (login) đọc trực tiếp từ CSDL SQL qua `db.query(User)`.
+#
+# => Không còn endpooint nào cho phép fetch danh sách user tự do ra ngoài.
+#    Xem thêm hàm `_login_handler` & `_upload_students` phía dưới.
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _hash_password(plain: str) -> str:
-    """Băm mật khẩu bằng bcrypt (passlib)."""
+    """Băm mật khẩu bằng bcrypt (passlib). Dùng cho seed & upload sinh viên."""
     return _pwd_context.hash(plain)
-
 
 # Role hiển thị tiếng Việt cho frontend
 ROLE_LABELS = {
@@ -66,78 +81,8 @@ ROLE_LABELS = {
     "student": "Sinh viên",
 }
 
-USERS = {
-    "giangvien": {
-        "username": "giangvien",
-        "password_hash": _hash_password("123"),
-        "full_name": "Giảng viên Cơ khí",
-        "role": "lecturer",
-        "department": "Khoa Cơ khí",
-    },
-    # ------------------------------------------------------------------
-    # 2 GIẢNG VIÊN (role: lecturer) - đồng bộ với MOCK_USERS ở index.html
-    # ------------------------------------------------------------------
-    "gv01": {
-        "username": "gv01",
-        "password_hash": _hash_password("123"),
-        "full_name": "TS. Nguyễn Văn Giảng",
-        "role": "lecturer",
-        "department": "Khoa Cơ khí - Bộ môn Kỹ thuật Cơ khí",
-    },
-    "gv02": {
-        "username": "gv02",
-        "password_hash": _hash_password("123"),
-        "full_name": "ThS. Trần Thị Dạy",
-        "role": "lecturer",
-        "department": "Khoa Cơ khí - Bộ môn Cơ khí Chế tạo",
-    },
-    # ------------------------------------------------------------------
-    # 5 SINH VIÊN (role: student) - đồng bộ với MOCK_USERS ở index.html
-    # username trùng MSSV để demo đăng nhập nhanh.
-    # ------------------------------------------------------------------
-    "sinhvien": {
-        "username": "sinhvien",
-        "password_hash": _hash_password("123"),
-        "full_name": "Sinh viên Cơ khí",
-        "role": "student",
-        "department": "Lớp CK - Kỹ thuật",
-    },
-    "2110481": {
-        "username": "2110481",
-        "password_hash": _hash_password("123"),
-        "full_name": "Nguyễn Văn An",
-        "role": "student",
-        "department": "21CK1",
-    },
-    "2110482": {
-        "username": "2110482",
-        "password_hash": _hash_password("123"),
-        "full_name": "Trần Thị Bình",
-        "role": "student",
-        "department": "21CK1",
-    },
-    "2110483": {
-        "username": "2110483",
-        "password_hash": _hash_password("123"),
-        "full_name": "Lê Văn Cường",
-        "role": "student",
-        "department": "21CK2",
-    },
-    "2110484": {
-        "username": "2110484",
-        "password_hash": _hash_password("123"),
-        "full_name": "Phạm Thị Dung",
-        "role": "student",
-        "department": "21CK2",
-    },
-"2110485": {
-        "username": "2110485",
-        "password_hash": _hash_password("123"),
-        "full_name": "Vũ Văn Em",
-        "role": "student",
-        "department": "21CK3",
-    },
-}
+# NOTE: Mọi tài khoản mẫu đều được seed vào CSDL ở startup (seed_users).
+# Không khai báo USERS dict ở đây nữa để tránh dữ liệu mock "rò rỉ" ra giao diện.
 
 
 # ===========================================================================
@@ -337,15 +282,16 @@ class StudentHistoryOut(BaseModel):
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def create_access_token(username: str) -> str:
+def create_access_token(username: str, role: str) -> str:
     """Tạo JWT token HS256 cho user (thời hạn cấu hình ở trên)."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": username, "exp": expire, "role": USERS[username]["role"]}
+    payload = {"sub": username, "exp": expire, "role": role}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
 ) -> UserInfo:
     """FastAPI dependency: xác thực JWT -> trả về user đang đăng nhập.
 
@@ -362,7 +308,8 @@ def get_current_user(
             credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
         )
         username = payload.get("sub")
-        if username not in USERS:
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
             raise jwt.InvalidTokenError()
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -376,7 +323,7 @@ def get_current_user(
             detail="Token không hợp lệ hoặc đã bị chỉnh sửa.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return UserInfo(**USERS[username])
+    return UserInfo(**user.to_auth_dict())
 
 
 def require_lecturer(user: UserInfo = Depends(get_current_user)) -> UserInfo:
@@ -395,23 +342,18 @@ def require_lecturer(user: UserInfo = Depends(get_current_user)) -> UserInfo:
 # ===========================================================================
 # LOGIN ENDPOINT
 # ===========================================================================
-def _login_handler(payload: LoginRequest) -> LoginResponse:
-    """Xử lý đăng nhập: kiểm tra user + mật khẩu -> cấp JWT."""
-    user = USERS.get(payload.username)
-    if user is None or not _pwd_context.verify(payload.password, user["password_hash"]):
+def _login_handler(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+    """Xử lý đăng nhập: kiểm tra user + mật khẩu trong CSDL -> cấp JWT."""
+    user = db.query(User).filter(User.username == payload.username).first()
+    if user is None or not _pwd_context.verify(payload.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sai tên đăng nhập hoặc mật khẩu.",
         )
-    token = create_access_token(payload.username)
+    token = create_access_token(user.username, user.role)
     return LoginResponse(
         access_token=token,
-        user=UserInfo(
-            username=user["username"],
-            full_name=user["full_name"],
-            role=user["role"],
-            department=user["department"],
-        ),
+        user=UserInfo(**user.to_auth_dict()),
     )
 
 
@@ -759,6 +701,247 @@ def _list_student_history(mssv: str) -> List[StudentHistoryOut]:
 
 
 # ===========================================================================
+# AI OCR CHẤM BÀI TỰ ĐỘNG (OpenRouter Vision Model)
+# ===========================================================================
+# Hệ thống dùng OpenRouter (chuẩn API OpenAI) với model Vision miễn phí
+# `google/gemini-1.5-flash` để đọc ảnh bài làm và trích xuất các sai lệch
+# giới hạn (ES, EI, es, ei, Smax, Smin, Nmax, Nmin) theo tiêu chuẩn ISO 286.
+
+# System Prompt gửi kèm ảnh -> model trả đúng định dạng JSON.
+_AI_SYSTEM_PROMPT = (
+    "Đây là bài làm môn dung sai lắp ghép ISO 286. Hãy đọc ảnh và trích xuất "
+    "các thông số sinh viên đã giải: ES, EI, es, ei, Smax, Smin, Nmax, Nmin. "
+    'Trả về đúng định dạng JSON, ví dụ: {"ES": 35, "EI": 0}. Không giải thích thêm.'
+)
+
+# Client OpenAI tương thích OpenRouter (base_url riêng).
+_openai_client = OpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url=OPENROUTER_BASE_URL,
+)
+
+
+def _extract_json_from_llm(text: str) -> dict:
+    """Trích xuất JSON dict từ phản hồi văn bản của model.
+
+    Model đôi khi bọc JSON trong ```json ... ``` (markdown fenced code block)
+    hoặc thêm chữ giải thích. Hàm này:
+      1. Bỏ thẻ ```json ... ``` nếu có.
+      2. Tìm khối `{...}` đầu tiên trong text.
+      3. Parse bằng json.loads.
+
+    Nếu không tìm thấy/parse lỗi -> raise ValueError (để handler bắt lỗi).
+    """
+    # Bỏ toàn bộ thẻ markdown code fence (```json ... ```).
+    cleaned = re.sub(r"```(?:json)?", "", text).strip()
+    # Tìm khối JSON đầu tiên (từ `{` đến `}`).
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("Model không trả về JSON hợp lệ.")
+
+    raw = cleaned[start : end + 1]
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Kết quả model không phải là một JSON object.")
+    return data
+
+
+def _ai_grade_handler(file: UploadFile):
+    """POST /api/ai-grade: nhận ảnh bài làm -> OCR bằng AI -> trả JSON thông số.
+
+    Quy trình:
+      1. Đọc bytes của file ảnh tải lên.
+      2. Chuyển đổi sang Base64 (data URL: data:image/<ext>;base64,...).
+      3. Gửi lên OpenRouter (model vision google/gemini-1.5-flash) kèm
+         System Prompt yêu cầu trích xuất ES, EI, es, ei, Smax, Smin, Nmax, Nmin.
+      4. Trích xuất JSON từ phản hồi và trả về frontend.
+
+    Lỗi (không đọc được file, API lỗi, JSON không hợp lệ) -> HTTP 400/502.
+    """
+    try:
+        # (1) Đọc toàn bộ nội dung file ảnh (bytes).
+        content = file.file.read()
+        if not content:
+            raise ValueError("File ảnh rỗng hoặc không đọc được.")
+
+        # (2) Xác định MIME type từ extension (mặc định image/png).
+        ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "png"
+        mime = f"image/{ext}" if ext in {"png", "jpg", "jpeg", "gif", "webp"} else "image/png"
+
+        # (2b) Chuyển ảnh sang Base64 dạng data URL (chuẩn cho Vision API).
+        b64_image = base64.b64encode(content).decode("utf-8")
+        data_url = f"data:{mime};base64,{b64_image}"
+
+        # (3) Gọi model vision trên OpenRouter.
+        response = _openai_client.chat.completions.create(
+            model=OPENROUTER_VISION_MODEL,
+            messages=[
+                {"role": "system", "content": _AI_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Hãy đọc bài làm trong ảnh và trả về JSON các thông số.",
+                        },
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                },
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1024,
+        )
+
+        # (4) Lấy nội dung trả về và trích xuất JSON.
+        llm_text = response.choices[0].message.content or ""
+        result = _extract_json_from_llm(llm_text)
+
+        return {
+            "success": True,
+            "data": result,
+            "model": OPENROUTER_VISION_MODEL,
+        }
+    except ValueError as exc:
+        # Lỗi nghiệp vụ (file rỗng, JSON không hợp lệ).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        # Lỗi hạ tầng (OpenRouter timeout, API key sai, network...).
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Không gọi được AI OCR: {exc}",
+        )
+
+
+# ===========================================================================
+# UPLOAD DANH SÁCH SINH VIÊN (POST /api/students/upload)
+# ===========================================================================
+# Nhận file .csv / .xlsx (cột: MSSV, HoTen, Lop) -> bulk insert vào bảng users
+# với role='student', mật khẩu mặc định '123' (hash bcrypt).
+# Chỉ Giảng viên (lecturer) mới được gọi.
+def _parse_student_file(file: UploadFile):
+    """Đọc file tải lên (.csv/.xlsx) và trích xuất danh sách {mssv, name, lop}."""
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv") and not filename.endswith(".xlsx"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Định dạng không hợp lệ. Chỉ hỗ trợ file .csv hoặc .xlsx.",
+        )
+
+    content = file.file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File rỗng hoặc không đọc được.",
+        )
+
+    students = []
+    if filename.endswith(".csv"):
+        # Đọc CSV (hỗ trợ nhiều encoding để tránh lỗi tiếng Việt).
+        text = None
+        for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+            try:
+                text = content.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        if text is None:
+            text = content.decode("utf-8", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            mssv = (row.get("MSSV") or row.get("mssv") or "").strip()
+            name = (row.get("HoTen") or row.get("hoten") or row.get("Họ Tên") or "").strip()
+            lop = (row.get("Lop") or row.get("lop") or row.get("Lớp") or "").strip()
+            if mssv:
+                students.append({"mssv": mssv, "name": name, "lop": lop})
+    else:
+        # Đọc XLSX bằng openpyxl.
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Thiếu thư viện openpyxl. Vui lòng cài: pip install openpyxl",
+            )
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        header = next(rows_iter, None)
+        if not header:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File Excel không có dữ liệu (thiếu header).",
+            )
+        header = [str(h).strip().lower() if h else "" for h in header]
+        idx_mssv = next((i for i, h in enumerate(header) if h in ("mssv", "mã số sv", "mã sinh viên")), 0)
+        idx_name = next((i for i, h in enumerate(header) if h in ("hoten", "họ và tên", "họ tên", "tên")), 1)
+        idx_lop = next((i for i, h in enumerate(header) if h in ("lop", "lớp")), 2)
+        for row in rows_iter:
+            if not row:
+                continue
+            mssv = str(row[idx_mssv]).strip() if idx_mssv < len(row) and row[idx_mssv] is not None else ""
+            name = str(row[idx_name]).strip() if idx_name < len(row) and row[idx_name] is not None else ""
+            lop = str(row[idx_lop]).strip() if idx_lop < len(row) and row[idx_lop] is not None else ""
+            if mssv:
+                students.append({"mssv": mssv, "name": name, "lop": lop})
+
+    return students
+
+
+def _upload_students(file: UploadFile, db: Session = Depends(get_db)) -> dict:
+    """POST /api/students/upload: đọc file -> bulk insert sinh viên vào bảng users."""
+    students = _parse_student_file(file)
+    if not students:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không tìm thấy dữ liệu sinh viên hợp lệ trong file (cột MSSV, HoTen, Lop).",
+        )
+
+    created = 0
+    skipped = 0
+    for s in students:
+        exists = db.query(User).filter(User.username == s["mssv"]).first()
+        if exists:
+            skipped += 1
+            continue
+        db.add(User(
+            username=s["mssv"],
+            full_name=s["name"] or f"Sinh viên {s['mssv']}",
+            role="student",
+            department=s["lop"],
+            password_hash=_pwd_context.hash("123"),
+        ))
+        created += 1
+
+    db.commit()
+    return {
+        "success": True,
+        "created": created,
+        "skipped": skipped,
+        "total": len(students),
+        "message": f"Đã thêm {created} sinh viên, bỏ qua {skipped} tài khoản đã tồn tại.",
+    }
+
+
+def _list_students(db: Session = Depends(get_db)) -> dict:
+    """GET /api/students: trả về danh sách sinh viên (role='student').
+
+    Dùng để Frontend cập nhật bảng "Danh sách sinh viên" sau khi upload.
+    """
+    students = (
+        db.query(User)
+        .filter(User.role == "student")
+        .order_by(User.username)
+        .all()
+    )
+    return {
+        "success": True,
+        "total": len(students),
+        "students": [u.to_dict() for u in students],
+    }
+
+
+# ===========================================================================
 # LIFESPAN (KHỞI TẠO DB + SEED)
 # ===========================================================================
 @asynccontextmanager
@@ -766,8 +949,10 @@ async def lifespan(app: FastAPI):
     """Khởi tạo CSDL + seed dữ liệu ISO 286 khi ứng dụng khởi động."""
     Base.metadata.create_all(bind=engine)
     seeded = iso_seed.seed_if_empty()
+    # Tự động tạo tài khoản mẫu (3 GV + 20 SV, mật khẩu '123') nếu DB trống.
+    users_created = seed_users()
     print(f"[ISO 286 DB] Bảng tra đã sẵn sàng. Seed mới: {seeded}")
-    print("[AUTH] JWT + RBAC đã sẵn sàng. User mẫu: giangvien / sinhvien (mật khẩu: 123)")
+    print(f"[AUTH] Đã tạo {users_created} tài khoản mẫu (gv01..gv03, 2110481..2110500, mật khẩu: 123)")
     yield
 
 
@@ -869,5 +1054,40 @@ app.add_api_route(
     dependencies=[Depends(get_current_user)],
     tags=["assignments"],
     summary="Nộp bài tập & chấm điểm tự động (Auto-grading)",
+)
+
+# /api/ai-grade - MỌI user đã đăng nhập (lecturer & student) đều truy cập được.
+#   -> bảo vệ bằng Depends(get_current_user)
+#   -> nhận ảnh bài làm (UploadFile) -> OCR bằng AI (OpenRouter vision model)
+#      -> trả JSON các sai lệch giới hạn (ES, EI, es, ei, Smax, Smin, Nmax, Nmin).
+app.add_api_route(
+    "/api/ai-grade",
+    _ai_grade_handler,
+    methods=["POST"],
+    dependencies=[Depends(get_current_user)],
+    tags=["ai-grade"],
+    summary="AI OCR chấm bài: đọc ảnh bài làm và trích xuất thông số ISO 286",
+)
+
+# /api/students/upload - CHỈ lecturer mới được gọi.
+#   -> nhận file .csv/.xlsx -> bulk insert sinh viên vào bảng users (role=student, pass '123').
+app.add_api_route(
+    "/api/students/upload",
+    _upload_students,
+    methods=["POST"],
+    dependencies=[Depends(require_lecturer)],
+    tags=["students"],
+    summary="Upload danh sách sinh viên (.csv/.xlsx) và tạo tài khoản hàng loạt",
+)
+
+# /api/students - CHỈ lecturer mới được gọi.
+#   -> trả về danh sách sinh viên (role='student') để Frontend cập nhật bảng sau khi upload.
+app.add_api_route(
+    "/api/students",
+    _list_students,
+    methods=["GET"],
+    dependencies=[Depends(require_lecturer)],
+    tags=["students"],
+    summary="Lấy danh sách sinh viên (role=student)",
 )
 

@@ -177,7 +177,7 @@ class ToleranceDiagram(Flowable):
         c.drawString(x0, y_axis - 0.5 * cm, "Đơn vị: μm (trục đứng)")
 
 
-def _build_pdf(elements: list, data: ExamData, styles: dict):
+def _build_pdf(elements: list, data: ExamData, styles: dict, include_answers: bool = True):
     stats = data.stats
     total = stats.get("total", 0)
     batch = stats.get("batchCode", "N/A")
@@ -185,25 +185,19 @@ def _build_pdf(elements: list, data: ExamData, styles: dict):
     pdf_h3 = styles["h3"]
     pdf_normal = styles["normal"]
 
-    # =====================================================================
-    # FORM HEADER CHUẨN DNTU (5 phần) - chèn ngay đầu trang
-    # =====================================================================
-    from app.services.pdf_exam_header import build_pdf_header
-    elements.extend(build_pdf_header())
-
-    elements.append(PageBreak())
+    from app.services.pdf_exam_header import build_exam_header
 
     for idx, q in enumerate(data.questions):
         if idx > 0:
             elements.append(PageBreak())
 
-        elements.append(Paragraph(f"MÃ ĐỀ: #{idx + 1} - {esc(q.examCode)}", pdf_h2))
-        elements.append(Paragraph(f"<b>Họ &amp; Tên:</b> {esc(q.student.name)}", pdf_normal))
-        elements.append(Paragraph(
-            f"<b>MSSV:</b> {esc(q.student.mssv)} | <b>Lớp:</b> {esc(q.student.className)} | "
-            f"<b>Mã lớp:</b> {esc(q.student.classCode)} | <b>Mức độ:</b> {esc(q.diffLabel)}",
-            pdf_normal,
-        ))
+        # -----------------------------------------------------------------
+        # Mã đề duy nhất cho mỗi bài (101, 102, 103...) -> gắn vào Header
+        # TUYỆT ĐỐI KHÔNG in lại text thô "MÃ ĐỀ / Họ & Tên / MSSV" cũ nữa.
+        # -----------------------------------------------------------------
+        ma_de = str(idx + 101)
+        elements.extend(build_exam_header(ma_de, batch))
+
         elements.append(Spacer(1, 8))
 
         elements.append(Paragraph("I. ĐỀ BÀI", pdf_h3))
@@ -218,6 +212,12 @@ def _build_pdf(elements: list, data: ExamData, styles: dict):
         for task in data.activeTasks:
             elements.append(Paragraph(f"• {esc(task.name)}", pdf_normal))
         elements.append(Spacer(1, 6))
+
+        # =================================================================
+        # PHẦN ĐÁP ÁN & BAREM - CHỈ render khi include_answers == True
+        # =================================================================
+        if not include_answers:
+            continue
 
         elements.append(Paragraph("III. ĐÁP ÁN & BÀI GIẢI CHI TIẾT", pdf_h3))
 
@@ -255,8 +255,12 @@ def _build_pdf(elements: list, data: ExamData, styles: dict):
         elements.append(_build_rubric_table(data.activeTasks, pdf_normal))
 
 
-def build_pdf_bytes(data: ExamData) -> io.BytesIO:
-    """Tạo tài liệu PDF từ ExamData và trả về BytesIO."""
+def build_pdf_bytes(data: ExamData, include_answers: bool = True) -> io.BytesIO:
+    """Tạo tài liệu PDF từ ExamData và trả về BytesIO.
+
+    include_answers=True  : render đầy đủ (câu hỏi + ĐÁP ÁN + BAREM).
+    include_answers=False : chỉ render Header chuẩn + I. ĐỀ BÀI + II. YÊU CẦU.
+    """
     bio = io.BytesIO()
     doc = SimpleDocTemplate(
         bio,
@@ -269,7 +273,7 @@ def build_pdf_bytes(data: ExamData) -> io.BytesIO:
         author=SCHOOL_NAME,
     )
     elements: List[Any] = []
-    _build_pdf(elements, data, build_pdf_styles())
+    _build_pdf(elements, data, build_pdf_styles(), include_answers=include_answers)
     doc.build(elements, onFirstPage=pdf_page_decorator, onLaterPages=pdf_page_decorator)
     bio.seek(0)
     return bio
@@ -278,4 +282,3 @@ def build_pdf_bytes(data: ExamData) -> io.BytesIO:
 def filename_pdf(data: ExamData) -> str:
     """Tạo tên file PDF theo mã lô kiểm tra."""
     return f"De_Thi_ISO286_{data.stats.get('batchCode')}.pdf"
-

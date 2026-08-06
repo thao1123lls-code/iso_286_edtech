@@ -1,11 +1,20 @@
-# TODO - Xây dựng hàm build_dntu_exam_header() (Form Đề thi chuẩn DNTU)
+# TODO - Làm lại Đăng nhập & Upload (Xóa Mock Data)
 
-## Steps
-- [x] Step 1: Thêm hàm `build_dntu_exam_header()` vào `app/services/pdf_exam_header.py` (giữ nguyên toàn bộ code cũ).
-  - [x] Phần 1: Bảng Phê duyệt (1 dòng x 2 cột, kẻ dọc giữa, không viền ngoài).
-  - [x] Phần 2: Dòng phân cách (in nghiêng, size 9, căn giữa, Spacer trên dưới).
-  - [x] Phần 3: Bảng Thông tin Đề thi (5 cột, dùng SPAN, Mã đề thi màu đỏ).
-  - [x] Phần 4: Bảng Thông tin Thí sinh (BOX, Nested Table MSSV 7 ô).
-  - [x] Phần 5: Bảng Điểm số & Ghi chú (Grid 2x4 + Box bullet points).
-- [x] Step 2: Thêm demo trong `__main__` để tạo file mẫu `_exam_header_form_dntu.pdf`.
-- [x] Step 3: Chạy `python app/services/pdf_exam_header.py` để kiểm tra (đã tạo thành công).
+## Frontend (index.html)
+- [ ] 1. Xóa hoàn toàn khối `MOCK_USERS` (no mock data trong Login UI)
+- [ ] 2. Viết lại `LoginScreen`: 2 tab [Đăng nhập Sinh Viên] / [Đăng nhập Giảng Viên]
+       - Tab Sinh Viên: Input MSSV + Mật khẩu
+       - Tab Giảng Viên: Input Tên đăng nhập + Mật khẩu
+       - UI tĩnh, chỉ gọi /api/login khi bấm Submit
+- [ ] 3. Thêm upload UI cho Giảng viên (`input type=file accept=".csv,.xlsx"` + nút upload)
+       vào `GeneratorScreen` (gọi POST /api/students/upload)
+
+## Backend (main.py)
+- [ ] 4. Rà soát: không có endpoint GET /users hoặc GET /mock-data (đảm bảo không fetch user tự do)
+- [ ] 5. Đảm bảo POST /api/students/upload hoàn chỉnh:
+       - Dùng UploadFile đọc CSV
+       - try-except xử lý đàng hoàng
+       - Trích xuất 3 cột (MSSV, HoTen, Lop) và insert vào database
+
+## Follow-up
+- [ ] 6. Validate syntax main.py & index.html

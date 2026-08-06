@@ -8,9 +8,50 @@ Ba bảng chính theo yêu cầu:
 Bảng bổ trợ:
 - iso_fit_library : thư viện kiểu lắp khuyến cáo công nghiệp
 """
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 
 from app.db.database import Base
+
+
+class User(Base):
+    """Tài khoản người dùng (Sinh viên & Giảng viên).
+
+    username trùng MSSV (sinh viên) hoặc mã GV / tên đăng nhập (giảng viên).
+    password_hash lưu bằng bcrypt (passlib).
+    """
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), nullable=False, unique=True, index=True)
+    full_name = Column(String(128), nullable=False)
+    role = Column(String(16), nullable=False, default="student")  # 'lecturer' | 'student'
+    department = Column(String(255), nullable=False, default="")
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_auth_dict(self):
+        return {
+            "username": self.username,
+            "full_name": self.full_name,
+            "role": self.role,
+            "department": self.department,
+        }
+
+    def to_dict(self):
+        """Trả về thông tin đầy đủ cho danh sách (thường dùng cho Giảng viên xem SV)."""
+        return {
+            "id": self.id,
+            "username": self.username,
+            "mssv": self.username,
+            "full_name": self.full_name,
+            "name": self.full_name,
+            "role": self.role,
+            "department": self.department,
+            "lop": self.department,
+        }
 
 
 class IsoSizeRange(Base):

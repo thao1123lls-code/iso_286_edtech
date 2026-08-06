@@ -23,10 +23,17 @@ def _stream(content: bytes, media_type: str, filename: str) -> StreamingResponse
 
 
 @router.post("/docx")
-async def export_docx(data: ExamData):
-    """Xuất bộ đề thi ra file Word (.docx)."""
+async def export_docx(data: ExamData, include_answers: bool = True):
+    """Xuất bộ đề thi ra file Word (.docx).
+
+    include_answers=True  (default): render đầy đủ câu hỏi + ĐÁP ÁN + BAREM.
+    include_answers=False         : chỉ Header chuẩn + ĐỀ BÀI + YÊU CẦU
+                                    (dùng làm đề thi thật, không lộ đáp án).
+    """
     try:
-        content, media_type, filename = export_service.export_docx(data)
+        content, media_type, filename = export_service.export_docx(
+            data, include_answers=include_answers
+        )
     except ToleranceValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -35,10 +42,17 @@ async def export_docx(data: ExamData):
 
 
 @router.post("/pdf")
-async def export_pdf(data: ExamData):
-    """Xuất bộ đề thi ra file PDF thực (ReportLab)."""
+async def export_pdf(data: ExamData, include_answers: bool = True):
+    """Xuất bộ đề thi ra file PDF thực (ReportLab).
+
+    include_answers=True  (default): render đầy đủ câu hỏi + ĐÁP ÁN + BAREM.
+    include_answers=False         : chỉ Header chuẩn + ĐỀ BÀI + YÊU CẦU
+                                    (dùng làm đề thi thật, không lộ đáp án).
+    """
     try:
-        content, media_type, filename = export_service.export_pdf(data)
+        content, media_type, filename = export_service.export_pdf(
+            data, include_answers=include_answers
+        )
     except ToleranceValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:

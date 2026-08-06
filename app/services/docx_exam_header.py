@@ -1,10 +1,10 @@
 """Xuất Form Header chuẩn DNTU (Trường ĐH Công nghệ Đồng Nai) ra Word (.docx).
 
 Hàm chính:
-    build_docx_header(doc)
+    build_docx_header(doc, ma_de=None, ma_lo_dot=None)
 
 Hàm này nhận object `doc` (python-docx Document) và dùng `doc.add_table()`
-để vẽ lại chính xác cấu trúc 5 phần y hệt như Header PDF (build_pdf_header).
+để vẽ lại chính xác cấu trúc 5 phần y hệt như Header PDF (build_exam_header).
 
 Cấu trúc 5 phần:
     1. Bảng Phê duyệt      (1 dòng x 2 cột, căn giữa, không viền ngoài)
@@ -109,14 +109,21 @@ def _add_borders(table, edges="box"):
 
 
 # ---------------------------------------------------------------------------
-# HÀM CHÍNH: build_docx_header(doc)
+# HÀM CHÍNH: build_docx_header(doc, ma_de, ma_lo_dot)
 # ---------------------------------------------------------------------------
-def build_docx_header(doc: Document):
+def build_docx_header(doc: Document, ma_de=None, ma_lo_dot=None):
     """Vẽ 5 phần Form Header chuẩn DNTU vào đầu file Word.
 
     - Gọi ngay sau khi tạo `Document()` (trước khi xuất câu hỏi).
     - Dùng doc.add_table() + cell.merge() để dựng layout.
+    - ma_de     : Mã đề thi (hiển thị màu ĐỎ ở Phần 3). Nếu None -> dùng EXAM_CODE.
+    - ma_lo_dot : Mã lô/đợt đề (hiển thị màu ĐỎ ở Phần 4). Nếu None -> dùng LOT_CODE.
     """
+    if ma_de is None:
+        ma_de = EXAM_CODE
+    if ma_lo_dot is None:
+        ma_lo_dot = LOT_CODE
+
     available = doc.sections[0]
     usable_w = available.page_width.cm - available.left_margin.cm - available.right_margin.cm
     # -> 21 - 3 - 2 = 16 cm
@@ -209,7 +216,7 @@ def build_docx_header(doc: Document):
               align=WD_ALIGN_PARAGRAPH.CENTER)
     _set_cell(tbl3.cell(3, 2), "Mã đề thi", size=10,
               align=WD_ALIGN_PARAGRAPH.CENTER)
-    _set_cell(tbl3.cell(3, 3), EXAM_CODE, size=10, bold=True,
+    _set_cell(tbl3.cell(3, 3), ma_de, size=10, bold=True,
               color=RED, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     for rr in range(4):
@@ -261,13 +268,19 @@ def build_docx_header(doc: Document):
     class_cell = tbl4.cell(2, 0)
     for cc in range(1, 4):
         class_cell = class_cell.merge(tbl4.cell(2, cc))
-    _set_cell(
-        class_cell,
-        f"Lớp/Nhóm: ...............  STT phòng: ........  Phòng thi: ........  "
-        f"Mã lô/đợt đề: {LOT_CODE}",
-        size=10, align=WD_ALIGN_PARAGRAPH.CENTER,
-    )
-    # Tô màu đỏ cho Mã lô/đợt đề (thực hiện đơn giản: tô toàn ô)
+    class_cell.text = ""
+    p = class_cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Phần đầu: Lớp/Nhóm, STT phòng, Phòng thi (màu đen)
+    r1 = p.add_run("Lớp/Nhóm: ...............  STT phòng: ........  Phòng thi: ........  ")
+    r1.font.size = Pt(10)
+    r2 = p.add_run("Mã lô/đợt đề: ")
+    r2.font.size = Pt(10)
+    # Mã lô/đợt đề: màu ĐỎ, đậm
+    r3 = p.add_run(ma_lo_dot)
+    r3.font.size = Pt(10)
+    r3.bold = True
+    r3.font.color.rgb = RED
     _set_vcenter(class_cell)
 
     # Dòng 3 - Ghi chú (merge cột 0-2) + Chữ ký thí sinh (cột 3)
