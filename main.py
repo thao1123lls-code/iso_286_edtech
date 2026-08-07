@@ -23,6 +23,7 @@ from typing import List, Optional
 import jwt
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import OpenAI
 from passlib.context import CryptContext
@@ -51,7 +52,9 @@ from app.db.seed import seed_users_if_empty as seed_users
 # ===========================================================================
 # ⚠️ Trong môi trường production hãy đặt biến môi trường JWT_SECRET_KEY
 # để không dùng secret mặc định này.
-SECRET_KEY = "iso286-edtech-secret-key-2026-change-me"
+import os
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "iso286-edtech-secret-key-2026-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 8 * 60  # 8 giờ (1 buổi thi / học)
 
@@ -715,10 +718,21 @@ _AI_SYSTEM_PROMPT = (
 )
 
 # Client OpenAI tương thích OpenRouter (base_url riêng).
-_openai_client = OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url=OPENROUTER_BASE_URL,
-)
+# ⚠️ Khởi tạo LAZY (chỉ tạo khi thật sự gọi /api/ai-grade) để ứng dụng vẫn
+#    chạy bình thường kể cả khi chưa cấu hình OPENROUTER_API_KEY.
+_openai_client = None
+
+
+def _get_openai_client():
+    """Trả về OpenAI client (OpenRouter). Tạo lazy lần đầu khi được gọi.:
+    """
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
+        )
+    return _openai_client
 
 
 def _extract_json_from_llm(text: str) -> dict:
@@ -773,8 +787,9 @@ def _ai_grade_handler(file: UploadFile):
         b64_image = base64.b64encode(content).decode("utf-8")
         data_url = f"data:{mime};base64,{b64_image}"
 
-        # (3) Gọi model vision trên OpenRouter.
-        response = _openai_client.chat.completions.create(
+# (3) Gọi model vision trên OpenRouter.
+        client = _get_openai_client()
+        response = client.chat.completions.create(
             model=OPENROUTER_VISION_MODEL,
             messages=[
                 {"role": "system", "content": _AI_SYSTEM_PROMPT},
@@ -942,6 +957,144 @@ def _list_students(db: Session = Depends(get_db)) -> dict:
 
 
 # ===========================================================================
+# UPLOAD DANH SÁCH SINH VIÊN - ENDPOINT GIẢNG VIÊN (POST /api/teachers/upload-students)
+# ===========================================================================
+# 📌 Endpoint mới theo yêu cầu: dùng pandas để đọc nội dung file .csv/.xlsx
+#   trực tiếp trong memory (không cần typeof openpyxl thủ công), trích xuất
+#   3 cột MSSV, HoTen, Lop, rồi bulk insert vào bảng users với role='student'
+#   và mật khẩu mặc định '123456'.
+#
+#   Khác biệt so với endpoint cũ /api/students/upload:
+#     - Dùng pandas (hỗ trợ cả .csv & .xlsx cùng 1 code path).
+#     - Mật khẩu mặc định là '123456' (theo yêu cầu).
+#     - Route mới: /api/teachers/upload-students.
+#   Cả hai endpoint đều chỉ Giảng viên (lecturer) mới được gọi.
+def _parse_student_file_pandas(file: UploadFile):
+    """Đọc file .csv/.xlsx bằng pandas và trích xuất danh sách {mssv, name, lop}.
+
+    Cột dữ liệu cần có: MSSV, HoTen, Lop.
+    Hàm cũng tự nhận diện các tên cột linh hoạt:
+      - MSSV: 'MSSV', 'Mã số SV', 'MaSV', 'student_id', ...
+      - HoTen: 'HoTen', 'Họ và tên', 'Họ Tên', 'full_name', ...
+      - Lop: 'Lop', 'Lớp', 'class', ...
+    """
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv") and not filename.endswith(".xlsx"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Định dạng không hợp lệ. Chỉ hỗ trợ file .csv hoặc .xlsx.",
+        )
+
+    content = file.file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File rỗng hoặc không đọc được.",
+        )
+
+    # Kiểm tra pandas đã được cài hay chưa (thêm vào requirements.txt).
+    try:
+        import pandas as pd
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Thiếu thư viện pandas. Vui lòng cài: pip install pandas openpyxl",
+        )
+
+    try:
+        if filename.endswith(".csv"):
+            # pandas tự động đoán encoding (thường UTF-8 BOM / UTF-8 / Latin-1).
+            df = pd.read_csv(io.BytesIO(content))
+        else:
+            # pandas đọc .xlsx trực tiếp từ memory (BytesIO) — không ghi file tạm.
+            df = pd.read_excel(io.BytesIO(content))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Không đọc được nội dung file: {exc}",
+        )
+
+    # Chuẩn hoá tên cột: bỏ dấu cách thừa, ký tự đặc biệt, viết thường.
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # Nhận diện tên cột linh hoạt.
+    def _find_col(*candidates):
+        for c in candidates:
+            for col in df.columns:
+                if col == c or c in col:
+                    return col
+        return None
+
+    col_mssv = _find_col("mssv", "mã số sv", "masv", "student_id", "msv")
+    col_name = _find_col("hoten", "họ và tên", "họ tên", "full_name", "tên", "ten")
+    col_lop = _find_col("lop", "lớp", "class", "classname")
+
+    if col_mssv is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không tìm thấy cột 'MSSV' trong file. Cần ít nhất cột MSSV.",
+        )
+
+    students = []
+    for _, row in df.iterrows():
+        mssv = str(row[col_mssv]).strip()
+        if not mssv or mssv.lower() in ("nan", "none", "null"):
+            continue
+        name = str(row[col_name]).strip() if col_name else ""
+        lop = str(row[col_lop]).strip() if col_lop else ""
+        # Loại bỏ chuỗi 'nan' do pandas trả về cho ô trống.
+        if name.lower() in ("nan", "none", "null"):
+            name = ""
+        if lop.lower() in ("nan", "none", "null"):
+            lop = ""
+        students.append({"mssv": mssv, "name": name, "lop": lop})
+
+    return students
+
+
+def _upload_students_teachers(file: UploadFile, db: Session = Depends(get_db)) -> dict:
+    """POST /api/teachers/upload-students: nhận file -> bulk insert sinh viên.
+
+    - Đọc file .csv/.xlsx bằng pandas (trong memory).
+    - Trích xuất 3 cột: MSSV, HoTen, Lop.
+    - Bulk insert vào bảng users với role='student', mật khẩu mặc định '123456'.
+    - Bỏ qua những sinh viên có MSSV đã tồn tại (tránh lỗi duplicate khóa chính).
+    - Trả về báo cáo: "Đã thêm thành công X sinh viên, bỏ qua Y sinh viên trùng lặp".
+    """
+    students = _parse_student_file_pandas(file)
+    if not students:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không tìm thấy dữ liệu sinh viên hợp lệ trong file (cần cột MSSV, HoTen, Lop).",
+        )
+
+    created = 0
+    skipped = 0
+    for s in students:
+        exists = db.query(User).filter(User.username == s["mssv"]).first()
+        if exists:
+            skipped += 1
+            continue
+        db.add(User(
+            username=s["mssv"],
+            full_name=s["name"] or f"Sinh viên {s['mssv']}",
+            role="student",
+            department=s["lop"],
+            password_hash=_pwd_context.hash("123456"),
+        ))
+        created += 1
+
+    db.commit()
+    return {
+        "success": True,
+        "created": created,
+        "skipped": skipped,
+        "total": len(students),
+        "message": f"Đã thêm thành công {created} sinh viên, bỏ qua {skipped} sinh viên trùng lặp.",
+    }
+
+
+# ===========================================================================
 # LIFESPAN (KHỞI TẠO DB + SEED)
 # ===========================================================================
 @asynccontextmanager
@@ -970,6 +1123,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# TRANG CHỦ (SERVE FRONTEND index.html)
+# ---------------------------------------------------------------------------
+# Để app có thể chạy trên một URL duy nhất (VD: Render), ta phục vụ luôn
+# file frontend index.html tại đường dẫn gốc "/". Khi deploy trên Render,
+# mọi người chỉ cần truy cập URL app là thấy giao diện (không cần Live Server).
+import os as _os
+_INDEX_HTML = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "index.html")
+
+
+@app.get("/", include_in_schema=False)
+async def _serve_index():
+    return FileResponse(_INDEX_HTML)
+
 
 # ---------------------------------------------------------------------------
 # ĐĂNG KÝ ROUTER
@@ -1089,5 +1257,18 @@ app.add_api_route(
     dependencies=[Depends(require_lecturer)],
     tags=["students"],
     summary="Lấy danh sách sinh viên (role=student)",
+)
+
+# /api/teachers/upload-students - CHỈ lecturer mới được gọi.
+#   -> nhận file .csv/.xlsx -> pandas đọc trong memory -> bulk insert sinh viên
+#      vào bảng users (role=student, mật khẩu mặc định '123456').
+#   -> bỏ qua MSSV đã tồn tại (thoát lỗi duplicate khóa chính).
+app.add_api_route(
+    "/api/teachers/upload-students",
+    _upload_students_teachers,
+    methods=["POST"],
+    dependencies=[Depends(require_lecturer)],
+    tags=["students"],
+    summary="Upload danh sách sinh viên (pandas, pass '123456') từ màn hình Giảng viên",
 )
 

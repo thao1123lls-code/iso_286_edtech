@@ -18,6 +18,14 @@ ENV/
 *.sqlite
 *.sqlite3
 
+# Environment variables (KHÔNG đẩy lên GitHub — chứa secret)
+.env
+.env.local
+.env.production
+.env.*.local
+# Trừ file mẫu .env.example (được phép commit)
+!.env.example
+
 # Test files & artifacts
 _smoke_test.py
 _api_test.py

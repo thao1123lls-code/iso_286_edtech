@@ -1,0 +1,39 @@
+# Render Blueprint (render.yaml) - Cấu hình triển khai ISO 286 EdTech
+# Dùng trình "Blueprints" trên dashboard Render để deploy toàn bộ Web Service + PostgreSQL.
+# 
+# Cách dùng:
+#   1. Đẩy code lên GitHub.
+#   2. Render -> New -> Blueprint -> chọn repo.
+#   3. Render tự tạo Web Service + PostgreSQL theo file này.
+#
+# Lưu ý quan trọng về SQLite:
+#   Render free tier có disk TẠM THỜI (bị xoá khi restart). Vì vậy file `iso286.db`
+#   sẽ bị mất. Do đó cấu hình bên dưới dùng **PostgreSQL** (DATABASE_URL) để dữ liệu
+#   ISO 286 + tài khoản được lưu bền vững.
+#   Khi không có DATABASE_URL, app tự fallback về SQLite (chạy local).
+
+databases:
+  - name: postgres-iso286
+    plan: free
+    # databaseName & user do Render tự sinh -> gán vào env DATABASE_URL của web service
+
+services:
+  - type: web
+    name: iso286-edtech
+    runtime: python
+    plan: free
+    autoDeploy: true
+    buildCommand: "pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
+    startCommand: "gunicorn main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT"
+    healthCheckPath: /docs
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      - key: DATABASE_URL
+        fromDatabase:
+          name: postgres-iso286
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        sync: false  # bảo mật: bạn tự set trên dashboard
+      - key: OPENROUTER_API_KEY
+        sync: false  # tuỳ chọn: chỉ cần khi dùng AI OCR

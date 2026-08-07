@@ -1,4 +1,5 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="vi" class="light">
 <head>
     <meta charset="UTF-8">
@@ -10,8 +11,12 @@
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for in-browser JSX compilation -->
+<!-- Babel for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS (xlsx) - Đọc file Excel/CSV trên trình duyệt -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    <!-- API Base URL - Cấu hình trung tâm (Production-ready) -->
+    <script src="utils/api.js"></script>
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts -->
@@ -272,6 +277,18 @@
         // Token JWT lưu ở module-level; App sẽ đồng bộ khi đăng nhập / đăng xuất.
         let AUTH_TOKEN = localStorage.getItem('iso286_token') || null;
 
+// -------------------------------------------------------------------
+        // API BASE URL - CẤU HÌNH TRUNG TÂM (Production-ready)
+        // -------------------------------------------------------------------
+        // Được nạp từ utils/api.js (đã include trong <head>). Thứ tự ưu tiên:
+        //   1. window.__API_URL__   (biến env inject lúc deploy chuẩn Production)
+        //   2. window.location.origin (frontend + backend cùng host, tránh CORS)
+        //   3. http://localhost:8000 (fallback khi mở file:// để test local)
+        // Mọi fetch() trong app đều dùng `${API_BASE}` (best-practice Production).
+        const API_BASE = (typeof window !== 'undefined' && (window.API_BASE || window.__API_URL__))
+            ? (window.API_BASE || window.__API_URL__)
+            : 'http://localhost:8000';
+
         function getAuthHeaders(extra = {}) {
             return AUTH_TOKEN
                 ? { ...extra, 'Authorization': `Bearer ${AUTH_TOKEN}` }
@@ -282,7 +299,7 @@
         // Nếu backend chưa chạy -> giữ nguyên dữ liệu nhúng ISO_DB làm fallback.
         async function loadIsoDbFromApi() {
             try {
-                const res = await fetch('http://127.0.0.1:8000/api/iso/tables', {
+                const res = await fetch(`${API_BASE}/api/iso/tables`, {
                     headers: getAuthHeaders()
                 });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -321,7 +338,7 @@
                     exam_data: { ...q, activeTasks }
                 }))
             };
-            const res = await fetch('http://127.0.0.1:8000/api/history', {
+            const res = await fetch(`${API_BASE}/api/history`, {
                 method: 'POST',
                 headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify(payload)
@@ -1409,7 +1426,7 @@
                 
                 try {
                     // API endpoint được cung cấp bởi main.py (FastAPI)
-                    const response = await fetch(`http://127.0.0.1:8000/api/export/${format}`, {
+                    const response = await fetch(`${API_BASE}/api/export/${format}`, {
                         method: 'POST',
                         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                         body: JSON.stringify(examData)
@@ -1435,9 +1452,74 @@
                 } catch (error) {
                     alert(`Giao tiếp Backend thất bại: ${error.message}\n\nVui lòng đảm bảo bạn đã cài đặt các thư viện Python (python-docx, reportlab...) và đang khởi chạy file main.py bằng lệnh:\n\nuvicorn main:app --reload`);
                     console.error(error);
-                } finally {
+} finally {
                     setLoader(false);
                 }
+            };
+
+            // Xử lý khi người dùng chọn file Excel/CSV để tải lên danh sách sinh viên.
+            // Dùng SheetJS (XLSX) đã nạp sẵn trong <head> để parse file ngay trên trình duyệt.
+            const handleFileUpload = (event) => {
+                const file = event.target.files && event.target.files[0];
+                if (!file) return;
+
+                const fileExt = (file.name || '').split('.').pop().toLowerCase();
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        let rows = [];
+                        if (fileExt === 'xlsx' || fileExt === 'xls') {
+                            // Parse Excel bằng SheetJS
+                            const data = new Uint8Array(e.target.result);
+                            const workbook = XLSX.read(data, { type: 'array' });
+                            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                            const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                            rows = json;
+                        } else {
+                            // Parse CSV / text thô
+                            const text = e.target.result;
+                            rows = text.split(/\r?\n/).map(line => line.split(/[\t,;]/));
+                        }
+
+                        // Chuyển mỗi dòng thành chuỗi tab-separated: MSSV[TAB]Họ tên[TAB]Lớp[TAB]Mã lớp
+                        const lines = [];
+                        rows.forEach((row) => {
+                            if (!row) return;
+                            const cells = row.map(c => (c == null ? '' : String(c).trim()));
+                            // Bỏ qua dòng tiêu đề (MSSV/Họ tên...) hoặc dòng trống
+                            if (cells.length === 0 || (cells[0] === '' && cells[1] === '')) return;
+                            if (/^(mssv|stt|số|họ|ma)/i.test(cells[0])) return;
+                            const hasData = cells.some(c => c !== '');
+                            if (!hasData) return;
+                            const mssv = cells[0] || '';
+                            const name = cells[1] || '';
+                            const className = cells[2] || '';
+                            const classCode = cells[3] || '';
+                            lines.push([mssv, name, className, classCode].join('\t'));
+                        });
+
+                        if (lines.length === 0) {
+                            alert('Không tìm thấy dữ liệu sinh viên hợp lệ trong file. Đảm bảo file có ít nhất 1 cột MSSV.');
+                            return;
+                        }
+
+                        setStudentListText(lines.join('\n'));
+                        alert(`Đã tải lên thành công ${lines.length} sinh viên từ file "${file.name}".`);
+                    } catch (err) {
+                        console.error('[Upload Student File] Lỗi parse file:', err);
+                        alert(`Không thể đọc file "${file.name}". Vui lòng kiểm tra lại định dạng.\n\nLỗi: ${err.message}`);
+                    }
+                };
+
+                if (fileExt === 'xlsx' || fileExt === 'xls') {
+                    reader.readAsArrayBuffer(file);
+                } else {
+                    reader.readAsText(file, 'UTF-8');
+                }
+
+                // Reset input để chọn lại cùng file nếu cần.
+                event.target.value = '';
             };
 
             return (
@@ -1469,11 +1551,23 @@
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            {generationMode === 'student_list' ? (
+{generationMode === 'student_list' ? (
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                        Nhập Danh Sách Sinh Viên (MSSV, Họ Tên, Lớp, Mã Lớp):
-                                    </label>
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                                            Nhập Danh Sách Sinh Viên (MSSV, Họ Tên, Lớp, Mã Lớp):
+                                        </label>
+                                        <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 border border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300 rounded-lg text-xs font-semibold cursor-pointer hover:bg-primary-50 dark:hover:bg-primary-950/30 hover:border-primary-400 transition-all duration-300 shadow-sm hover:scale-[1.02] active:scale-95">
+                                            <Icon name="folder-open" />
+                                            Tải lên Excel/CSV
+                                            <input
+                                                type="file"
+                                                accept=".xlsx, .xls, .csv"
+                                                className="hidden"
+                                                onChange={handleFileUpload}
+                                            />
+                                        </label>
+                                    </div>
                                     <textarea 
                                         rows={4}
                                         value={studentListText}
@@ -1807,7 +1901,7 @@
                 setLoading(true);
                 setError('');
                 try {
-                    const res = await fetch('http://127.0.0.1:8000/api/history', {
+                    const res = await fetch(`${API_BASE}/api/history`, {
                         headers: getAuthHeaders()
                     });
                     if (res.status === 401 || res.status === 403) {
@@ -1884,7 +1978,7 @@
                 setLoader(true);
                 try {
                     const examData = buildExamDataFromBatch(batch);
-                    const response = await fetch(`http://127.0.0.1:8000/api/export/${format}`, {
+                    const response = await fetch(`${API_BASE}/api/export/${format}`, {
                         method: 'POST',
                         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                         body: JSON.stringify(examData)
@@ -2159,7 +2253,7 @@
                 setLoading(true);
                 setError('');
                 try {
-                    const res = await fetch(`http://127.0.0.1:8000/api/history/student/${mssv}`, {
+                    const res = await fetch(`${API_BASE}/api/history/student/${mssv}`, {
                         headers: getAuthHeaders()
                     });
                     if (res.status === 401 || res.status === 403) {
@@ -2427,7 +2521,7 @@
                 setError('');
                 setIsEmpty(false);
                 try {
-                    const res = await fetch(`http://127.0.0.1:8000/api/assignments/${mssv}`, {
+                    const res = await fetch(`${API_BASE}/api/assignments/${mssv}`, {
                         headers: getAuthHeaders()
                     });
                     if (res.status === 401 || res.status === 403) {
@@ -2528,7 +2622,7 @@
                     };
 
                     // Gọi API POST /api/assignments/{mssv}/submit (Auto-grading).
-                    const res = await fetch(`http://127.0.0.1:8000/api/assignments/${mssv}/submit`, {
+                    const res = await fetch(`${API_BASE}/api/assignments/${mssv}/submit`, {
                         method: 'POST',
                         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                         body: JSON.stringify(payload)
@@ -2872,6 +2966,272 @@ if (error && !assignment) {
             );
         };
 
+// ===================================================================
+        // UPLOAD STUDENTS SCREEN - Màn hình Giảng viên: Upload danh sách sinh viên
+        // ===================================================================
+        // Chỉ hiển thị cho role 'lecturer'. Gồm:
+        //   - Form upload file .csv / .xlsx (input type="file", accept=".csv, .xlsx")
+        //   - Nút "Tải lên danh sách" (màu primary xanh, hover)
+        //   - Gửi FormData chứa file lên API POST /api/teachers/upload-students
+        //   - Vô hiệu hóa nút + hiện "Đang xử lý..." khi đang upload
+        //   - Toast thông báo thành công / thất bại
+        //   - Tự động cập nhật lại bảng danh sách sinh viên (GET /api/students)
+        const UploadStudentsScreen = () => {
+            const [selectedFile, setSelectedFile] = useState(null);
+            const [uploading, setUploading] = useState(false);
+            const [students, setStudents] = useState([]);
+            const [total, setTotal] = useState(0);
+            const [loadingTable, setLoadingTable] = useState(true);
+            const [tableError, setTableError] = useState('');
+            const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
+
+            // Toast tự động ẩn sau 5 giây.
+            useEffect(() => {
+                if (!toast) return;
+                const timer = setTimeout(() => setToast(null), 5000);
+                return () => clearTimeout(timer);
+            }, [toast]);
+
+            // Tải danh sách sinh viên từ GET /api/students.
+            const loadStudents = async () => {
+                setLoadingTable(true);
+                setTableError('');
+                try {
+                    const res = await fetch(`${API_BASE}/api/students`, {
+                        headers: getAuthHeaders()
+                    });
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền truy cập.');
+                    }
+                    if (!res.ok) throw new Error(`Lỗi máy chủ: HTTP ${res.status}`);
+                    const data = await res.json();
+                    setStudents(Array.isArray(data.students) ? data.students : []);
+                    setTotal(data.total || 0);
+                } catch (err) {
+                    console.error('[UploadStudents] Lỗi tải danh sách:', err);
+                    setTableError(err.message || 'Không thể tải danh sách sinh viên.');
+                } finally {
+                    setLoadingTable(false);
+                }
+            };
+
+            // Gọi tải danh sách khi component mount.
+            useEffect(() => {
+                loadStudents();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
+
+            // Xử lý sự kiện chọn file.
+            const handleFileChange = (e) => {
+                const file = e.target.files && e.target.files[0];
+                setSelectedFile(file || null);
+            };
+
+            // Xử lý sự kiện upload: gửi FormData chứa file lên API backend.
+            const handleUpload = async (e) => {
+                e.preventDefault();
+                if (!selectedFile) {
+                    setToast({ type: 'error', message: 'Vui lòng chọn file .csv hoặc .xlsx trước khi tải lên.' });
+                    return;
+                }
+
+                setUploading(true);
+                setToast(null);
+                try {
+                    const formData = new FormData();
+                    formData.append('file', selectedFile);
+
+                    const res = await fetch(`${API_BASE}/api/teachers/upload-students`, {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: formData
+                    });
+
+                    if (res.status === 401 || res.status === 403) {
+                        throw new Error('Phiên đăng nhập đã hết hạn hoặc không có quyền tải lên.');
+                    }
+
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        throw new Error(data.detail || `Lỗi máy chủ: HTTP ${res.status}`);
+                    }
+
+                    // Hiển thị Toast thành công với báo cáo từ backend.
+                    setToast({
+                        type: 'success',
+                        message: data.message || `Đã thêm thành công ${data.created || 0} sinh viên, bỏ qua ${data.skipped || 0} sinh viên trùng lặp.`
+                    });
+
+                    // Xóa file đã chọn sau khi upload xong.
+                    setSelectedFile(null);
+                    if (e.target) e.target.value = '';
+
+                    // Tự động cập nhật lại bảng danh sách sinh viên bên dưới.
+                    await loadStudents();
+                } catch (err) {
+                    console.error('[UploadStudents] Lỗi upload:', err);
+                    setToast({ type: 'error', message: err.message || 'Tải lên thất bại. Vui lòng thử lại.' });
+                } finally {
+                    setUploading(false);
+                }
+            };
+
+            return (
+                <div className="space-y-8 animate-fadeInUp">
+                    {/* Header */}
+                    <div className="flex justify-between items-center no-print">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center shadow-primary-glow">
+                                    <Icon name="user-plus" />
+                                </div>
+                                <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Danh Sách Sinh Viên</h2>
+                            </div>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 ml-14">Tải lên danh sách sinh viên (.csv / .xlsx) để tạo tài khoản hàng loạt.</p>
+                        </div>
+                        <button
+                            onClick={loadStudents}
+                            disabled={loadingTable}
+                            className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2.5 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 border border-slate-200 dark:border-slate-700 hover:scale-[1.03] active:scale-95 text-sm disabled:opacity-60">
+                            <Icon name="rotate" className={loadingTable ? 'fa-spin' : ''} /> Làm mới
+                        </button>
+                    </div>
+
+                    {/* Toast thông báo */}
+                    {toast && (
+                        <div className={`fixed top-6 right-6 z-[60] max-w-sm w-full shadow-2xl rounded-2xl overflow-hidden border animate-fadeInUp ${toast.type === 'success' ? 'bg-emerald-500 border-emerald-400' : 'bg-rose-500 border-rose-400'}`} role="alert">
+                            <div className="flex items-start gap-3 p-4">
+                                <div className="text-white text-xl mt-0.5 shrink-0">
+                                    <Icon name={toast.type === 'success' ? 'circle-check' : 'circle-exclamation'} />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="text-white font-bold text-sm mb-0.5">
+                                        {toast.type === 'success' ? 'Thành công!' : 'Thất bại!'}
+                                    </div>
+                                    <div className="text-white/95 text-xs leading-relaxed">{toast.message}</div>
+                                </div>
+                                <button onClick={() => setToast(null)} className="text-white/80 hover:text-white text-lg leading-none shrink-0">
+                                    <Icon name="xmark" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Card Upload Form */}
+                    <Card className="p-6 lg:p-8 no-print">
+                        <form onSubmit={handleUpload} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                    Chọn file danh sách sinh viên (.csv / .xlsx):
+                                </label>
+                                <div className="flex flex-col md:flex-row gap-4">
+                                    <div className="flex-1">
+                                        <input
+                                            type="file"
+                                            accept=".csv, .xlsx"
+                                            onChange={handleFileChange}
+                                            disabled={uploading}
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-dashed border-2 border-slate-300 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-all duration-300 shadow-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-600 file:text-white hover:file:bg-primary-500 file:cursor-pointer disabled:opacity-60"
+                                        />
+                                        <p className="text-xs text-slate-400 mt-2 flex items-center gap-1.5">
+                                            <Icon name="circle-info" /> Cần có 3 cột: <strong className="font-mono">MSSV</strong>, <strong className="font-mono">HoTen</strong>, <strong className="font-mono">Lop</strong>. Mật khẩu mặc định: <strong className="font-mono">123456</strong>.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        disabled={uploading || !selectedFile}
+                                        className="md:w-56 bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl p-4 transition-all duration-300 flex items-center justify-center gap-2 shadow-soft hover:shadow-primary-glow hover:scale-[1.02] active:scale-95 tracking-wide"
+                                    >
+                                        {uploading ? (
+                                            <>
+                                                <Icon name="spinner" className="fa-spin" /> Đang xử lý...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Icon name="cloud-arrow-up" /> TẢI LÊN DANH SÁCH
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </Card>
+
+                    {/* Bảng danh sách sinh viên */}
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                                <Icon name="users" className="text-primary-500" /> Danh sách sinh viên hiện có
+                                <span className="ml-2 px-3 py-1 rounded-full bg-primary-100 dark:bg-primary-950/60 text-primary-700 dark:text-primary-300 text-sm font-bold border border-primary-300 dark:border-primary-800">
+                                    {total} sinh viên
+                                </span>
+                            </h3>
+                        </div>
+
+                        {loadingTable && (
+                            <Card className="p-10 text-center text-slate-500 dark:text-slate-400">
+                                <Icon name="spinner" className="fa-spin text-3xl text-primary-500 mb-3" />
+                                <div>Đang tải danh sách sinh viên...</div>
+                            </Card>
+                        )}
+
+                        {tableError && !loadingTable && (
+                            <div className="bg-rose-50 border border-rose-300 border-l-4 border-l-rose-500 text-rose-700 px-5 py-4 rounded-xl shadow-sm flex items-start gap-3" role="alert">
+                                <Icon name="circle-exclamation" className="mt-0.5 text-rose-500" />
+                                <div>
+                                    <strong className="font-bold block mb-0.5">Không tải được danh sách!</strong>
+                                    <span className="block sm:inline">{tableError}</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {!loadingTable && !tableError && students.length === 0 && (
+                            <Card className="p-12 text-center">
+                                <div className="w-20 h-20 mx-auto rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-4xl text-slate-400 mb-4">
+                                    <Icon name="user-group" />
+                                </div>
+                                <h3 className="text-lg font-bold text-slate-700 dark:text-slate-200 mb-1">Chưa có sinh viên nào</h3>
+                                <p className="text-sm text-slate-500 dark:text-slate-400">Hãy tải lên file danh sách sinh viên (.csv / .xlsx) để bắt đầu.</p>
+                            </Card>
+                        )}
+
+                        {!loadingTable && !tableError && students.length > 0 && (
+                            <Card className="overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-left">
+                                        <thead>
+                                            <tr className="bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-200">
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">STT</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">MSSV</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">Họ và tên</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">Lớp</th>
+                                                <th className="border-b border-slate-200 dark:border-slate-700 p-3.5 font-bold">Vai trò</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {students.map((s, idx) => (
+                                                <tr key={s.username || s.mssv || idx} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                                    <td className="p-3.5 text-slate-500 font-mono">{idx + 1}</td>
+                                                    <td className="p-3.5 font-mono font-bold text-primary-700 dark:text-primary-400">{s.mssv || s.username}</td>
+                                                    <td className="p-3.5 font-medium text-slate-800 dark:text-slate-200">{s.name || s.full_name}</td>
+                                                    <td className="p-3.5 text-slate-600 dark:text-slate-300">{s.lop || s.department || '—'}</td>
+                                                    <td className="p-3.5">
+                                                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-300 dark:border-emerald-800">
+                                                            Sinh viên
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </Card>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
         // ===================================================================
         // LOGIN SCREEN - Màn hình đăng nhập (JWT + RBAC)
         // ===================================================================
@@ -2906,7 +3266,7 @@ const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
                 setLoading(true);
                 setError('');
                 try {
-                    const res = await fetch('http://127.0.0.1:8000/api/login', {
+                    const res = await fetch(`${API_BASE}/api/login`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username, password })
@@ -3222,8 +3582,15 @@ const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'assignment' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
                                 <Icon name="pen-to-square" className="w-4 text-center" /> Bài Tập Của Tôi
                             </button>
-                            )}
+)}
+                            {!isStudent && (
                             <button 
+                                onClick={() => setActiveMenu('students')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'students' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
+                                <Icon name="user-plus" className="w-4 text-center" /> Quản Lý Sinh Viên
+                            </button>
+                            )}
+<button
                                 onClick={() => setActiveMenu('history')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group ${activeMenu === 'history' ? 'bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-primary-glow' : 'text-slate-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
                                 <Icon name="clock-rotate-left" className="w-4 text-center" /> Lịch Sử Đề Thi
@@ -3242,7 +3609,7 @@ const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
                                     <Icon name="bars" />
                                 </div>
 <h1 className="text-lg lg:text-xl font-bold tracking-tight text-slate-800 dark:text-white">
-                                    {activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : activeMenu === 'history' ? 'Lịch Sử Đề Thi Đã Tạo' : activeMenu === 'assignment' ? 'Bài Tập Của Tôi - Làm & Nộp Bài' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
+{activeMenu === 'lookup' ? 'Module Giảng Dạy & Trực Quan' : activeMenu === 'learning' ? 'Màn Hình Hướng Dẫn Học Tập (Learning Mode)' : activeMenu === 'library' ? 'Kho Dữ Liệu Tiêu Chuẩn Kỹ Thuật ISO' : activeMenu === 'history' ? 'Lịch Sử Đề Thi Đã Tạo' : activeMenu === 'students' ? 'Quản Lý Sinh Viên - Tải Lên Danh Sách' : activeMenu === 'assignment' ? 'Bài Tập Của Tôi - Làm & Nộp Bài' : 'Module Sinh Đề & Chấm Tự Động (Rubric 10.0)'}
                                 </h1>
                             </div>
                             <div className="flex items-center gap-4">
@@ -3277,7 +3644,7 @@ const LoginScreen = ({ onLogin, theme, toggleTheme }) => {
                         </header>
 
 <div className="p-6 lg:p-10 pb-24 print:p-0">
-{activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : activeMenu === 'history' ? (currentUser && currentUser.role === 'student' ? <StudentHistoryScreen currentUser={currentUser} /> : <HistoryScreen currentUser={currentUser} />) : activeMenu === 'assignment' ? <StudentPortal currentUser={currentUser} /> : <GeneratorScreen />}
+{activeMenu === 'lookup' ? <LookupScreen /> : activeMenu === 'learning' ? <LearningScreen /> : activeMenu === 'library' ? <LibraryScreen /> : activeMenu === 'history' ? (currentUser && currentUser.role === 'student' ? <StudentHistoryScreen currentUser={currentUser} /> : <HistoryScreen currentUser={currentUser} />) : activeMenu === 'students' ? <UploadStudentsScreen /> : activeMenu === 'assignment' ? <StudentPortal currentUser={currentUser} /> : <GeneratorScreen />}
                         </div>
                     </main>
                 </div>
